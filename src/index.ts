@@ -10,9 +10,10 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
+import { generateAIReview } from './lib/ai-client';
 import { decodeHtmlEntities, parseWebhookBody } from './lib/utils';
-import { insertProduct, insertReviews } from './services/db';
-import { AmazonProductData } from './types';
+import { getReview, insertProduct, insertReviews } from './services/db';
+import { AmazonProductData, Review } from './types';
 
 const SITE_URL = 'https://www.amazon.in';
 const BRANDS_KEY = {
@@ -88,6 +89,34 @@ export default {
 
 				console.log(`Webhook processed: ${processed} items`);
 				return Response.json({ success: true, processed });
+			}
+		} else if (pathname.startsWith('/review')) {
+			const base = '/review';
+			if (method === 'POST' && pathname === `${base}/generate`) {
+				const review_id = params.get('id') || '';
+				if (review_id) {
+					try {
+						const review = await getReview(env, review_id);
+						if (review) {
+							const aiBody = await generateAIReview(env, {
+								title: review.title || '',
+								body: review.body || '',
+								rating: review.rating || 4,
+							});
+							if (aiBody) {
+								console.info(`Processed ${review_id} review`);
+								return Response.json({ success: true, data: { body: aiBody } });
+							}
+						} else {
+							console.warn(`Review not found with id=${review_id}`);
+							return Response.json({ error: `Review not found with id=${review_id}` });
+						}
+					} catch (error) {
+						console.error(`Failed to process review ${review_id}:`, error);
+					}
+				} else {
+					return new Response('Review id is missing');
+				}
 			}
 		}
 		return new Response('Hello World!');

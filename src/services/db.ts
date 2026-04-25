@@ -1,3 +1,5 @@
+import { Review } from '../types';
+
 export async function insertProduct(env: Env, data: any): Promise<void> {
 	await env.DB.prepare(
 		`
@@ -34,4 +36,10 @@ export async function insertReviews(env: Env, asin: string, reviews: any[]): Pro
 
 	const results = await env.DB.batch(batch);
 	return results.filter((r: any) => r.success).length;
+}
+
+export async function getReview(env: Env, id: string) {
+	if (!id) return;
+	const review_data = env.DB.prepare('SELECT * FROM reviews WHERE id = ?').bind([id]).first<Review>();
+	return { ...review_data };
 }
