@@ -93,26 +93,30 @@ export default {
 		} else if (pathname.startsWith('/review')) {
 			const base = '/review';
 			if (method === 'POST' && pathname === `${base}/generate`) {
-				const review_id = params.get('id') || '';
-				if (review_id) {
+				const id = params.get('id') || '';
+				if (id) {
 					try {
-						const review = await getReview(env, review_id);
+						console.log('review fetching started...');
+						const review = await getReview(env, id);
+						console.log('review fetching end...', review);
 						if (review) {
+							console.log('review generating started...');
 							const aiBody = await generateAIReview(env, {
 								title: review.title || '',
 								body: review.body || '',
 								rating: review.rating || 4,
 							});
+							console.log('review generating end...');
 							if (aiBody) {
-								console.info(`Processed ${review_id} review`);
+								console.info(`Processed ${id} review`);
 								return Response.json({ success: true, data: { ...aiBody } });
 							}
 						} else {
-							console.warn(`Review not found with id=${review_id}`);
-							return Response.json({ error: `Review not found with id=${review_id}` });
+							console.warn(`Review not found with id=${id}`);
+							return Response.json({ error: `Review not found with id=${id}` });
 						}
 					} catch (error) {
-						console.error(`Failed to process review ${review_id}:`, error);
+						console.error(`Failed to process review ${id}:`, error);
 						return new Response('Failed to process review', { status: 500 });
 					}
 				} else {
