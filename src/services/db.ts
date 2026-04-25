@@ -49,3 +49,7 @@ export async function updateReview(env: Env, id: string | number, status: string
 		.bind(status, ai_title, ai_body, id)
 		.run();
 }
+
+export async function getAllReviews(env: Env, status: string, limit: number): Promise<void> {
+	await env.DB.prepare(`SELECT * FROM reviews WHERE ai_status = ? LIMIT ?`).bind(status, limit).all<Review>();
+}

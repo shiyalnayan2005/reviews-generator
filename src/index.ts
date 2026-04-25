@@ -125,6 +125,55 @@ export default {
 					return new Response('Review id is missing');
 				}
 			}
+			if (method === 'POST' && pathname === `${base}/generate/bulk`) {
+				const limit = parseInt(params.get('limit') || '10'); // batch size
+				const status = params.get('status') || 'pending'; // filter
+
+				try {
+					// 🔹 fetch reviews to process
+					const reviews = await env.DB.prepare(`SELECT * FROM reviews WHERE ai_status = ? LIMIT ?`).bind(status, limit).all<Review>();
+
+					if (!reviews.results.length) {
+						return Response.json({ success: true, message: 'No reviews to process' });
+					}
+
+					console.log(`Processing ${reviews.results.length} reviews...`);
+
+					const results = [];
+
+					for (const review of reviews.results) {
+						try {
+							// 🔹 mark as processing (prevents duplicate runs)
+							await updateReview(env, review.id, 'processing', '', '');
+
+							const aiBody = await generateAIReview(env, {
+								title: review.title || '',
+								body: review.body || '',
+								rating: review.rating || 4,
+							});
+
+							await updateReview(env, review.id, 'done', aiBody.title, aiBody.body);
+
+							results.push({ id: review.id, status: 'done' });
+						} catch (err) {
+							console.error(`Failed for ${review.id}`, err);
+
+							await updateReview(env, review.id, 'failed', '', '');
+
+							results.push({ id: review.id, status: 'failed' });
+						}
+					}
+
+					return Response.json({
+						success: true,
+						processed: results.length,
+						results,
+					});
+				} catch (error) {
+					console.error('Bulk generation failed:', error);
+					return new Response('Bulk generation failed', { status: 500 });
+				}
+			}
 		}
 		return new Response('Hello World!');
 	},
