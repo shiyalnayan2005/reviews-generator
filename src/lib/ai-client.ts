@@ -1,4 +1,7 @@
-export async function generateAIReview(env: Env, input: { title: string; body: string; rating: number }): Promise<string> {
+export async function generateAIReview(
+	env: Env,
+	input: { title: string; body: string; rating: number },
+): Promise<{ title: string; body: string }> {
 	// Extract key nouns from the original review (simple approach)
 	const words = (input.body || '').toLowerCase().split(/\s+/);
 	const keyNouns = words
@@ -44,7 +47,7 @@ export async function generateAIReview(env: Env, input: { title: string; body: s
     
     {
       "title": "<rewritten small title>",
-      "review": "<rewritten review text>",
+      "body": "<rewritten review text>",
     }
     
     DO NOT return anything else.
@@ -70,5 +73,16 @@ export async function generateAIReview(env: Env, input: { title: string; body: s
 	console.info('PROCESSED DATA : ', data);
 	const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-	return text.trim();
+	let parsed;
+
+	try {
+		parsed = JSON.parse(text);
+		if (parsed.title && parsed.body) {
+			return { ...parsed };
+		} else {
+			return { title: input.title, body: text.toString() };
+		}
+	} catch {
+		throw new Error('Invalid AI response');
+	}
 }

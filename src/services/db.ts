@@ -40,6 +40,6 @@ export async function insertReviews(env: Env, asin: string, reviews: any[]): Pro
 
 export async function getReview(env: Env, id: string) {
 	if (!id) return;
-	const review_data = env.DB.prepare('SELECT * FROM reviews WHERE id = ?').bind([id]).first<Review>();
+	const review_data = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?').bind(id).first<Review>();
 	return { ...review_data };
 }

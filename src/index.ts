@@ -105,7 +105,7 @@ export default {
 							});
 							if (aiBody) {
 								console.info(`Processed ${review_id} review`);
-								return Response.json({ success: true, data: { body: aiBody } });
+								return Response.json({ success: true, data: { ...aiBody } });
 							}
 						} else {
 							console.warn(`Review not found with id=${review_id}`);
@@ -113,6 +113,7 @@ export default {
 						}
 					} catch (error) {
 						console.error(`Failed to process review ${review_id}:`, error);
+						return new Response('Failed to process review', { status: 500 });
 					}
 				} else {
 					return new Response('Review id is missing');
