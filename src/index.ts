@@ -10,9 +10,52 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
+const SITE_URL = 'https://www.amazon.in';
+const BRANDS_KEY = {
+	happimess: '17337761031',
+	jonathany: '18809330031',
+};
 
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
-		return new Response("Hello World!");
+		const url = new URL(request.url);
+		const pathname = url.pathname;
+		const method = request.method;
+		const params = url.searchParams;
+
+		if (pathname.startsWith('/api')) {
+			const base = '/api';
+			if (method === 'GET' && pathname === `${base}/asin`) {
+				const brand = params.get('brand') as keyof typeof BRANDS_KEY;
+				if (!(brand in BRANDS_KEY)) return new Response('Invalid brand name', { status: 400 });
+
+				const brand_url = `${SITE_URL}/s?srs=${BRANDS_KEY[brand]}`;
+				try {
+					const res = await fetch(brand_url);
+
+					// get ASIN from response html
+					const asin_items = new Set<string>();
+					const rewriter = new HTMLRewriter().on('[data-asin]', {
+						element(el) {
+							const asin = el.getAttribute('data-asin');
+							if (asin && asin !== 'null') asin_items.add(asin);
+						},
+					});
+
+					const html = await rewriter.transform(res).text();
+
+					//return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+					return Response.json({
+						total_asin: asin_items.size,
+						url: brand_url,
+						asin_items: [...asin_items],
+					});
+				} catch (error) {
+					console.error('Brand ASIN fail : ', error);
+					return new Response('Internal error', { status: 500 });
+				}
+			}
+		}
+		return new Response('Hello World!');
 	},
 } satisfies ExportedHandler<Env>;
