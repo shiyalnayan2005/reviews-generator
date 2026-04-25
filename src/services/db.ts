@@ -43,3 +43,9 @@ export async function getReview(env: Env, id: string) {
 	const review_data = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?').bind(id).first<Review>();
 	return { ...review_data };
 }
+
+export async function updateReview(env: Env, id: string | number, status: string, ai_title: string, ai_body: string = ''): Promise<void> {
+	await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ? WHERE id = ?`)
+		.bind(status, ai_title, ai_body, id)
+		.run();
+}

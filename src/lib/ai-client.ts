@@ -47,7 +47,7 @@ export async function generateAIReview(
     
     {
       "title": "<rewritten small title>",
-      "body": "<rewritten review text>",
+      "body": "<rewritten review text>"
     }
     
     DO NOT return anything else.
@@ -55,7 +55,7 @@ export async function generateAIReview(
     `;
 
 	const response = await fetch(
-		`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+		`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${env.GEMINI_API_KEY}`,
 		{
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -63,7 +63,7 @@ export async function generateAIReview(
 				contents: [{ parts: [{ text: prompt }] }],
 				generationConfig: {
 					temperature: 0.9, // Even more variety
-					maxOutputTokens: 150,
+					responseMimeType: 'application/json',
 				},
 			}),
 		},

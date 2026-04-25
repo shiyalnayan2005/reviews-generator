@@ -12,7 +12,7 @@
  */
 import { generateAIReview } from './lib/ai-client';
 import { decodeHtmlEntities, parseWebhookBody } from './lib/utils';
-import { getReview, insertProduct, insertReviews } from './services/db';
+import { getReview, insertProduct, insertReviews, updateReview } from './services/db';
 import { AmazonProductData, Review } from './types';
 
 const SITE_URL = 'https://www.amazon.in';
@@ -108,7 +108,9 @@ export default {
 							});
 							console.log('review generating end...');
 							if (aiBody) {
-								console.info(`Processed ${id} review`);
+								console.log('updating review...');
+								await updateReview(env, id, 'done', aiBody.title, aiBody.body);
+								console.info(`Updated ${id} review`);
 								return Response.json({ success: true, data: { ...aiBody } });
 							}
 						} else {
