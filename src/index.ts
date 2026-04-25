@@ -66,6 +66,21 @@ export default {
 			const base = '/webhook';
 			if (method === 'POST' && pathname === `${base}/products`) {
 				console.log('Scrapper Response Type : ', request.headers.get('content-type'));
+				const request_type = request.headers.get('content-type');
+				if (request_type?.includes('multipart/form-data')) {
+					const formData = await request.formData();
+
+					// Inspect keys
+					for (const [key, value] of formData.entries()) {
+						console.log('KEY:', key);
+
+						console.log('VALUE:', value);
+						//if (typeof value === 'string') {
+						//} else {
+						//	console.log('FILE:', value.name, value.type);
+						//}
+					}
+				}
 			}
 		}
 		return new Response('Hello World!');
