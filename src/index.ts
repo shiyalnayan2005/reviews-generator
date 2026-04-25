@@ -45,10 +45,15 @@ export default {
 					const html = await rewriter.transform(res).text();
 
 					//return new Response(html, { headers: { 'Content-Type': 'text/html' } });
-					return Response.json({
-						total_asin: asin_items.size,
-						url: brand_url,
-						asin_items: [...asin_items],
+					//return Response.json({
+					//	total_asin: asin_items.size,
+					//	url: brand_url,
+					//	asin_items: [...asin_items],
+					//});
+					return new Response([...asin_items].join('\n'), {
+						headers: {
+							'Content-Type': 'text/plain',
+						},
 					});
 				} catch (error) {
 					console.error('Brand ASIN fail : ', error);
