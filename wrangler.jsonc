@@ -8,12 +8,17 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-04-24",
 	"observability": {
-		"enabled": true
+		"enabled": true,
 	},
 	"upload_source_maps": true,
-	"compatibility_flags": [
-		"nodejs_compat"
-	]
+	"compatibility_flags": ["nodejs_compat"],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "review-db",
+			"database_id": "9abafc41-1619-47aa-994a-cf0e96d2804e",
+		},
+	],
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

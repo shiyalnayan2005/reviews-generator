@@ -10,6 +10,10 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
+import { decodeHtmlEntities, parseWebhookBody } from './lib/utils';
+import { insertProduct, insertReviews } from './services/db';
+import { AmazonProductData } from './types';
+
 const SITE_URL = 'https://www.amazon.in';
 const BRANDS_KEY = {
 	happimess: '17337761031',
@@ -46,11 +50,6 @@ export default {
 					const html = await rewriter.transform(res).text();
 
 					//return new Response(html, { headers: { 'Content-Type': 'text/html' } });
-					//return Response.json({
-					//	total_asin: asin_items.size,
-					//	url: brand_url,
-					//	asin_items: [...asin_items],
-					//});
 					const asin_text_list = [...asin_items].slice(0, limit).join('\n');
 					return new Response(asin_text_list, {
 						headers: {
@@ -65,45 +64,30 @@ export default {
 		} else if (pathname.startsWith('/webhook')) {
 			const base = '/webhook';
 			if (method === 'POST' && pathname === `${base}/products`) {
-				const contentType = request.headers.get('content-type');
+				const payloads = await parseWebhookBody(request);
+				console.log(`Processing ${payloads.length} items from webhook`);
 
-				if (contentType?.includes('multipart/form-data')) {
-					const formData = await request.formData();
-					const file = formData.get('result');
+				let processed = 0;
+				for (const item of payloads) {
+					const asin = item.input;
+					const result: AmazonProductData = typeof item.result === 'string' ? JSON.parse(item.result) : item.result;
 
-					if (file && file instanceof File) {
-						// STEP 1: get binary stream
-						const stream = file.stream();
+					await insertProduct(env, {
+						asin,
+						name: decodeHtmlEntities(result.name || ''),
+						average_rating: result.average_rating,
+						total_reviews: result.total_reviews,
+					});
 
-						// STEP 2: decompress (most likely gzip)
-						const decompressedStream = stream.pipeThrough(new DecompressionStream('gzip'));
-
-						// STEP 3: convert to text
-						const text = await new Response(decompressedStream).text();
-
-						// DEBUG (check first few chars)
-						console.log(text.slice(0, 200));
-
-						// STEP 4: parse JSONL
-						const lines = text.split('\n').filter(Boolean);
-
-						const data = [];
-						for (const line of lines) {
-							try {
-								data.push(JSON.parse(line));
-							} catch {
-								console.log('Bad line skipped');
-							}
-						}
-
-						console.log('Parsed items:', data.length);
-						console.log('First item:', data[0]);
-
-						return new Response('processed');
+					if (result.reviews?.length) {
+						await insertReviews(env, asin, result.reviews);
 					}
+
+					processed++;
 				}
 
-				return new Response('no file', { status: 400 });
+				console.log(`Webhook processed: ${processed} items`);
+				return Response.json({ success: true, processed });
 			}
 		}
 		return new Response('Hello World!');
