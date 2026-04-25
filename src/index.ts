@@ -69,34 +69,41 @@ export default {
 
 				if (contentType?.includes('multipart/form-data')) {
 					const formData = await request.formData();
-
 					const file = formData.get('result');
 
 					if (file && file instanceof File) {
-						const text = await file.text();
-						console.info({ text });
-						// Split JSONL into lines
+						// STEP 1: get binary stream
+						const stream = file.stream();
+
+						// STEP 2: decompress (most likely gzip)
+						const decompressedStream = stream.pipeThrough(new DecompressionStream('gzip'));
+
+						// STEP 3: convert to text
+						const text = await new Response(decompressedStream).text();
+
+						// DEBUG (check first few chars)
+						console.log(text.slice(0, 200));
+
+						// STEP 4: parse JSONL
 						const lines = text.split('\n').filter(Boolean);
 
-						const data = lines
-							.map((line) => {
-								try {
-									return JSON.parse(line);
-								} catch (err) {
-									console.log('Invalid JSON line:', line);
-									return null;
-								}
-							})
-							.filter(Boolean);
+						const data = [];
+						for (const line of lines) {
+							try {
+								data.push(JSON.parse(line));
+							} catch {
+								console.log('Bad line skipped');
+							}
+						}
 
-						console.log('Parsed items count:', data.length);
+						console.log('Parsed items:', data.length);
 						console.log('First item:', data[0]);
 
 						return new Response('processed');
 					}
 				}
 
-				return new Response('no file found', { status: 400 });
+				return new Response('no file', { status: 400 });
 			}
 		}
 		return new Response('Hello World!');
