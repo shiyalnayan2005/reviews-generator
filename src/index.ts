@@ -27,6 +27,7 @@ export default {
 			const base = '/api';
 			if (method === 'GET' && pathname === `${base}/asin`) {
 				const brand = params.get('brand') as keyof typeof BRANDS_KEY;
+				const limit = parseInt(params.get('limit') || '-1');
 				if (!(brand in BRANDS_KEY)) return new Response('Invalid brand name', { status: 400 });
 
 				const brand_url = `${SITE_URL}/s?srs=${BRANDS_KEY[brand]}`;
@@ -50,7 +51,8 @@ export default {
 					//	url: brand_url,
 					//	asin_items: [...asin_items],
 					//});
-					return new Response([...asin_items].join('\n'), {
+					const asin_text_list = [...asin_items].slice(0, limit).join('\n');
+					return new Response(asin_text_list, {
 						headers: {
 							'Content-Type': 'text/plain',
 						},
@@ -59,6 +61,11 @@ export default {
 					console.error('Brand ASIN fail : ', error);
 					return new Response('Internal error', { status: 500 });
 				}
+			}
+		} else if (pathname.startsWith('/webhook')) {
+			const base = '/webhook';
+			if (method === 'POST' && pathname === `${base}/products`) {
+				console.log('Scrapper Response Type : ', request.headers.get('content-type'));
 			}
 		}
 		return new Response('Hello World!');
