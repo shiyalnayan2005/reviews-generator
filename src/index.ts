@@ -65,22 +65,38 @@ export default {
 		} else if (pathname.startsWith('/webhook')) {
 			const base = '/webhook';
 			if (method === 'POST' && pathname === `${base}/products`) {
-				console.log('Scrapper Response Type : ', request.headers.get('content-type'));
-				const request_type = request.headers.get('content-type');
-				if (request_type?.includes('multipart/form-data')) {
+				const contentType = request.headers.get('content-type');
+
+				if (contentType?.includes('multipart/form-data')) {
 					const formData = await request.formData();
 
-					// Inspect keys
-					for (const [key, value] of formData.entries()) {
-						console.log('KEY:', key);
+					const file = formData.get('result');
 
-						console.log('VALUE:', value);
-						//if (typeof value === 'string') {
-						//} else {
-						//	console.log('FILE:', value.name, value.type);
-						//}
+					if (file && file instanceof File) {
+						const text = await file.text();
+						console.info({ text });
+						// Split JSONL into lines
+						const lines = text.split('\n').filter(Boolean);
+
+						const data = lines
+							.map((line) => {
+								try {
+									return JSON.parse(line);
+								} catch (err) {
+									console.log('Invalid JSON line:', line);
+									return null;
+								}
+							})
+							.filter(Boolean);
+
+						console.log('Parsed items count:', data.length);
+						console.log('First item:', data[0]);
+
+						return new Response('processed');
 					}
 				}
+
+				return new Response('no file found', { status: 400 });
 			}
 		}
 		return new Response('Hello World!');
