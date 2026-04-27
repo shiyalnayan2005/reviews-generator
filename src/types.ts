@@ -43,3 +43,24 @@ export interface AmazonReview {
 	title?: string;
 	review?: string;
 }
+
+// Database operation types
+export interface ProductInsertData {
+	asin: string;
+	name?: string;
+	average_rating?: number;
+	total_reviews?: number;
+}
+
+export interface ReviewInsertData {
+	username?: string;
+	stars?: string | number;
+	title?: string;
+	review?: string;
+}
+
+export interface D1BatchResult {
+	success: boolean;
+	error?: string;
+	results?: any[];
+}
