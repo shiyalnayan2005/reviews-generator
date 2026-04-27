@@ -202,6 +202,28 @@ function serveDashboardHTML(): Response {
         .btn-primary:hover { background: #1d4ed8; }
         .btn-secondary { background: #f1f5f9; color: #475569; }
         .btn-secondary:hover { background: #e2e8f0; }
+        .actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .icon-btn {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .icon {
+            width: 18px;
+            height: 18px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
         .loading {
             display: inline-block;
             width: 16px;
@@ -385,8 +407,15 @@ function serveDashboardHTML(): Response {
         let currentStatus = 'all';
         let currentSearch = '';
         let currentProductAsin = '';
+        let currentReviews = [];
         let currentProductPage = 0;
         let currentReviewPage = 0;
+
+        const icons = {
+            eye: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+            refresh: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.8 9.8 0 0 1-6.7-2.7"></path><path d="M3 12a9 9 0 0 1 9-9 9.8 9.8 0 0 1 6.7 2.7"></path><path d="M3 3v6h6"></path><path d="M21 21v-6h-6"></path></svg>',
+            spinner: '<span class="loading" aria-hidden="true"></span>'
+        };
 
         async function fetchJson(url, options = {}) {
             const response = await fetch(url, options);
@@ -408,6 +437,25 @@ function serveDashboardHTML(): Response {
                 '"': '&quot;',
                 "'": '&#39;'
             }[char]));
+        }
+
+        function renderReviews() {
+            const tbody = document.getElementById('reviews-tbody');
+            tbody.innerHTML = currentReviews.map(review => \`
+                <tr>
+                    <td>\${escapeHtml(review.id)}</td>
+                    <td>\${escapeHtml(review.asin)}</td>
+                    <td>\${escapeHtml(review.title)}</td>
+                    <td>\${escapeHtml(review.rating)}</td>
+                    <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
+                    <td>
+                        <div class="actions">
+                            <button class="btn btn-primary icon-btn" onclick="viewReview(\${review.id})" title="View review" aria-label="View review">\${icons.eye}</button>
+                            <button class="btn btn-secondary icon-btn" onclick="generateReview(\${review.id}, event)" title="Generate review" aria-label="Generate review">\${icons.refresh}</button>
+                        </div>
+                    </td>
+                </tr>
+            \`).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
         }
 
         async function loadStats() {
@@ -436,7 +484,7 @@ function serveDashboardHTML(): Response {
                             <td>\${escapeHtml(product.rating)}</td>
                             <td>\${escapeHtml(product.total_reviews)}</td>
                             <td>
-                                <button class="btn btn-secondary" onclick="viewProductReviews('\${escapeHtml(product.asin)}')">View Reviews</button>
+                                <button class="btn btn-secondary icon-btn" onclick="viewProductReviews('\${escapeHtml(product.asin)}')" title="View reviews" aria-label="View reviews">\${icons.eye}</button>
                             </td>
                         </tr>
                     \`).join('');
@@ -457,20 +505,8 @@ function serveDashboardHTML(): Response {
 
                 const data = await fetchJson(url);
                 if (data.success) {
-                    const tbody = document.getElementById('reviews-tbody');
-                    tbody.innerHTML = data.reviews.map(review => \`
-                        <tr>
-                            <td>\${escapeHtml(review.id)}</td>
-                            <td>\${escapeHtml(review.asin)}</td>
-                            <td>\${escapeHtml(review.title)}</td>
-                            <td>\${escapeHtml(review.rating)}</td>
-                            <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
-                            <td>
-                                <button class="btn btn-primary" onclick="viewReview(\${review.id})">View</button>
-                                \${review.ai_status === 'pending' ? \`<button class="btn btn-secondary" onclick="regenerateReview(\${review.id}, event)">Regenerate</button>\` : ''}
-                            </td>
-                        </tr>
-                    \`).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
+                    currentReviews = data.reviews;
+                    renderReviews();
                 }
             } catch (error) {
                 console.error('Failed to load reviews:', error);
@@ -480,8 +516,10 @@ function serveDashboardHTML(): Response {
 
         async function viewReview(reviewId) {
             try {
-                const data = await fetchJson(\`/api/review?id=\${reviewId}\`);
-                const review = data.review;
+                const review = currentReviews.find((item) => Number(item.id) === Number(reviewId));
+                if (!review) {
+                    throw new Error('Review is not available in the current table. Refresh the list and try again.');
+                }
 
                 // Show review details in modal
                 const modal = document.getElementById('review-modal');
@@ -505,26 +543,33 @@ function serveDashboardHTML(): Response {
             }
         }
 
-        async function regenerateReview(reviewId, event) {
-            const btn = event?.target || document.activeElement;
-            const originalText = btn.textContent;
-            btn.textContent = 'Processing...';
+        async function generateReview(reviewId, event) {
+            const btn = event?.currentTarget || event?.target?.closest('button') || document.activeElement;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = icons.spinner;
+            btn.disabled = true;
             btn.classList.add('processing');
 
             try {
                 const data = await fetchJson(\`/review/generate?id=\${reviewId}\`, { method: 'POST' });
 
                 if (data.success) {
-                    await refreshData();
-                    showMessage('Review regenerated successfully!', 'success');
+                    currentReviews = currentReviews.map((review) => Number(review.id) === Number(reviewId)
+                        ? { ...review, ai_status: 'done', ai_title: data.data?.title || review.ai_title, ai_body: data.data?.body || review.ai_body }
+                        : review
+                    );
+                    renderReviews();
+                    await loadStats();
+                    showMessage('Review generated successfully!', 'success');
                 } else {
-                    showMessage('Failed to regenerate review', 'error');
+                    showMessage('Failed to generate review', 'error');
                 }
             } catch (error) {
-                console.error('Failed to regenerate review:', error);
-                showMessage('Failed to regenerate review', 'error');
+                console.error('Failed to generate review:', error);
+                showMessage(error.message || 'Failed to generate review', 'error');
             } finally {
-                btn.textContent = originalText;
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
                 btn.classList.remove('processing');
             }
         }
