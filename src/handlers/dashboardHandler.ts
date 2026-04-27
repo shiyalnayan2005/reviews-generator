@@ -1,4 +1,4 @@
-import { getProducts, getProductReviews, getReview, searchReviews, getReviewStats } from '../services/db';
+import { clearReviewAI, deleteProduct, deleteReview, getProducts, getProductReviews, getReview, searchReviews, getReviewStats } from '../services/db';
 import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
 
@@ -38,12 +38,34 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 				return handleError(new ValidationError('Review id parameter required'));
 			}
 
+			if (request.method === 'POST' && url.searchParams.get('action') === 'clear') {
+				await clearReviewAI(env, id);
+				return Response.json({ success: true });
+			}
+
+			if (request.method === 'DELETE') {
+				await deleteReview(env, id);
+				return Response.json({ success: true });
+			}
+
 			const review = await getReview(env, id);
 			if (!review) {
 				return handleError(new ValidationError(`Review not found with id=${id}`));
 			}
 
 			return Response.json({ success: true, review });
+		}
+
+		if (pathname === '/api/product') {
+			const asin = url.searchParams.get('asin');
+			if (!asin) {
+				return handleError(new ValidationError('ASIN parameter required'));
+			}
+
+			if (request.method === 'DELETE') {
+				await deleteProduct(env, asin);
+				return Response.json({ success: true });
+			}
 		}
 
 		if (pathname === '/api/search') {
@@ -202,6 +224,8 @@ function serveDashboardHTML(): Response {
         .btn-primary:hover { background: #1d4ed8; }
         .btn-secondary { background: #f1f5f9; color: #475569; }
         .btn-secondary:hover { background: #e2e8f0; }
+        .btn-danger { background: #fee2e2; color: #b91c1c; }
+        .btn-danger:hover { background: #fecaca; }
         .actions {
             display: flex;
             gap: 8px;
@@ -407,13 +431,18 @@ function serveDashboardHTML(): Response {
         let currentStatus = 'all';
         let currentSearch = '';
         let currentProductAsin = '';
+        let currentProducts = [];
         let currentReviews = [];
+        let productActions = {};
+        let reviewActions = {};
         let currentProductPage = 0;
         let currentReviewPage = 0;
 
         const icons = {
             eye: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
             refresh: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.8 9.8 0 0 1-6.7-2.7"></path><path d="M3 12a9 9 0 0 1 9-9 9.8 9.8 0 0 1 6.7 2.7"></path><path d="M3 3v6h6"></path><path d="M21 21v-6h-6"></path></svg>',
+            eraser: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 21-4-4 10-10 4 4-10 10Z"></path><path d="m14 6 4-4 4 4-4 4"></path><path d="M10 21h11"></path></svg>',
+            trash: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>',
             spinner: '<span class="loading" aria-hidden="true"></span>'
         };
 
@@ -439,23 +468,53 @@ function serveDashboardHTML(): Response {
             }[char]));
         }
 
+        function renderActionIcon(actionState, actionName, icon) {
+            return actionState === actionName ? icons.spinner : icon;
+        }
+
+        function renderProducts() {
+            const tbody = document.getElementById('products-tbody');
+            tbody.innerHTML = currentProducts.map(product => {
+                const actionState = productActions[product.asin];
+                return \`
+                    <tr>
+                        <td>\${escapeHtml(product.asin)}</td>
+                        <td>\${escapeHtml(product.title)}</td>
+                        <td>\${escapeHtml(product.rating)}</td>
+                        <td>\${escapeHtml(product.total_reviews)}</td>
+                        <td>
+                            <div class="actions">
+                                <button class="btn btn-secondary icon-btn" onclick="viewProductReviews('\${escapeHtml(product.asin)}')" title="View reviews" aria-label="View reviews" \${actionState ? 'disabled' : ''}>\${icons.eye}</button>
+                                <button class="btn btn-danger icon-btn" onclick="removeProduct('\${escapeHtml(product.asin)}', event)" title="Remove product" aria-label="Remove product" \${actionState ? 'disabled' : ''}>\${renderActionIcon(actionState, 'delete', icons.trash)}</button>
+                            </div>
+                        </td>
+                    </tr>
+                \`;
+            }).join('') || '<tr><td colspan="5" style="text-align: center; padding: 40px;">No products found.</td></tr>';
+        }
+
         function renderReviews() {
             const tbody = document.getElementById('reviews-tbody');
-            tbody.innerHTML = currentReviews.map(review => \`
-                <tr>
-                    <td>\${escapeHtml(review.id)}</td>
-                    <td>\${escapeHtml(review.asin)}</td>
-                    <td>\${escapeHtml(review.title)}</td>
-                    <td>\${escapeHtml(review.rating)}</td>
-                    <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
-                    <td>
-                        <div class="actions">
-                            <button class="btn btn-primary icon-btn" onclick="viewReview(\${review.id})" title="View review" aria-label="View review">\${icons.eye}</button>
-                            <button class="btn btn-secondary icon-btn" onclick="generateReview(\${review.id}, event)" title="Generate review" aria-label="Generate review">\${icons.refresh}</button>
-                        </div>
-                    </td>
-                </tr>
-            \`).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
+            tbody.innerHTML = currentReviews.map(review => {
+                const actionState = reviewActions[review.id];
+                return \`
+                    <tr>
+                        <td>\${escapeHtml(review.id)}</td>
+                        <td>\${escapeHtml(review.asin)}</td>
+                        <td>\${escapeHtml(review.title)}</td>
+                        <td>\${escapeHtml(review.rating)}</td>
+                        <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
+                        <td>
+                            <div class="actions">
+                                <button class="btn btn-primary icon-btn" onclick="viewReview(\${review.id})" title="View review" aria-label="View review" \${actionState ? 'disabled' : ''}>\${icons.eye}</button>
+                                <button class="btn btn-secondary icon-btn" onclick="generateReview(\${review.id})" title="Generate review" aria-label="Generate review" \${actionState ? 'disabled' : ''}>\${renderActionIcon(actionState, 'generate', icons.refresh)}</button>
+                                <button class="btn btn-secondary icon-btn" onclick="clearReviewAI(\${review.id})" title="Clear AI review" aria-label="Clear AI review" \${actionState ? 'disabled' : ''}>\${renderActionIcon(actionState, 'clear', icons.eraser)}</button>
+                                <button class="btn btn-danger icon-btn" onclick="removeReview(\${review.id})" title="Remove review" aria-label="Remove review" \${actionState ? 'disabled' : ''}>\${renderActionIcon(actionState, 'delete', icons.trash)}</button>
+                            </div>
+                        </td>
+                    </tr>
+                \`;
+            }).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
         }
 
         async function loadStats() {
@@ -476,18 +535,8 @@ function serveDashboardHTML(): Response {
             try {
                 const data = await fetchJson(\`/api/products?limit=20&offset=\${currentProductPage * 20}\`);
                 if (data.success) {
-                    const tbody = document.getElementById('products-tbody');
-                    tbody.innerHTML = data.products.map(product => \`
-                        <tr>
-                            <td>\${escapeHtml(product.asin)}</td>
-                            <td>\${escapeHtml(product.title)}</td>
-                            <td>\${escapeHtml(product.rating)}</td>
-                            <td>\${escapeHtml(product.total_reviews)}</td>
-                            <td>
-                                <button class="btn btn-secondary icon-btn" onclick="viewProductReviews('\${escapeHtml(product.asin)}')" title="View reviews" aria-label="View reviews">\${icons.eye}</button>
-                            </td>
-                        </tr>
-                    \`).join('');
+                    currentProducts = data.products;
+                    renderProducts();
                 }
             } catch (error) {
                 console.error('Failed to load products:', error);
@@ -543,12 +592,15 @@ function serveDashboardHTML(): Response {
             }
         }
 
-        async function generateReview(reviewId, event) {
-            const btn = event?.currentTarget || event?.target?.closest('button') || document.activeElement;
-            const originalHtml = btn.innerHTML;
-            btn.innerHTML = icons.spinner;
-            btn.disabled = true;
-            btn.classList.add('processing');
+        async function generateReview(reviewId) {
+            const previousReview = currentReviews.find((review) => Number(review.id) === Number(reviewId));
+            reviewActions[reviewId] = 'generate';
+            currentReviews = currentReviews.map((review) => Number(review.id) === Number(reviewId)
+                ? { ...review, ai_status: 'processing' }
+                : review
+            );
+            renderReviews();
+            await loadStats();
 
             try {
                 const data = await fetchJson(\`/review/generate?id=\${reviewId}\`, { method: 'POST' });
@@ -566,11 +618,93 @@ function serveDashboardHTML(): Response {
                 }
             } catch (error) {
                 console.error('Failed to generate review:', error);
+                if (previousReview) {
+                    currentReviews = currentReviews.map((review) => Number(review.id) === Number(reviewId) ? previousReview : review);
+                    renderReviews();
+                    await loadStats();
+                }
                 showMessage(error.message || 'Failed to generate review', 'error');
             } finally {
-                btn.innerHTML = originalHtml;
-                btn.disabled = false;
-                btn.classList.remove('processing');
+                delete reviewActions[reviewId];
+                renderReviews();
+            }
+        }
+
+        async function clearReviewAI(reviewId) {
+            const previousReview = currentReviews.find((review) => Number(review.id) === Number(reviewId));
+            reviewActions[reviewId] = 'clear';
+            renderReviews();
+
+            try {
+                await fetchJson(\`/api/review?id=\${reviewId}&action=clear\`, { method: 'POST' });
+                currentReviews = currentReviews.map((review) => Number(review.id) === Number(reviewId)
+                    ? { ...review, ai_status: 'pending', ai_title: '', ai_body: '' }
+                    : review
+                );
+                await loadStats();
+                showMessage('AI review cleared successfully!', 'success');
+            } catch (error) {
+                console.error('Failed to clear AI review:', error);
+                if (previousReview) {
+                    currentReviews = currentReviews.map((review) => Number(review.id) === Number(reviewId) ? previousReview : review);
+                }
+                showMessage(error.message || 'Failed to clear AI review', 'error');
+            } finally {
+                delete reviewActions[reviewId];
+                renderReviews();
+            }
+        }
+
+        async function removeReview(reviewId) {
+            if (!confirm('Remove this review?')) return;
+
+            const previousReviews = currentReviews;
+            reviewActions[reviewId] = 'delete';
+            renderReviews();
+
+            try {
+                await fetchJson(\`/api/review?id=\${reviewId}\`, { method: 'DELETE' });
+                currentReviews = currentReviews.filter((review) => Number(review.id) !== Number(reviewId));
+                await loadStats();
+                showMessage('Review removed successfully!', 'success');
+            } catch (error) {
+                console.error('Failed to remove review:', error);
+                currentReviews = previousReviews;
+                showMessage(error.message || 'Failed to remove review', 'error');
+            } finally {
+                delete reviewActions[reviewId];
+                renderReviews();
+            }
+        }
+
+        async function removeProduct(asin) {
+            if (!confirm('Remove this product and its reviews?')) return;
+
+            const previousProducts = currentProducts;
+            const previousReviews = currentReviews;
+            productActions[asin] = 'delete';
+            renderProducts();
+
+            try {
+                await fetchJson('/api/product?asin=' + encodeURIComponent(asin), { method: 'DELETE' });
+                currentProducts = currentProducts.filter((product) => product.asin !== asin);
+                currentReviews = currentReviews.filter((review) => review.asin !== asin);
+                if (currentProductAsin === asin) {
+                    currentProductAsin = '';
+                    currentSearch = '';
+                    document.getElementById('search-input').value = '';
+                }
+                await loadStats();
+                showMessage('Product removed successfully!', 'success');
+            } catch (error) {
+                console.error('Failed to remove product:', error);
+                currentProducts = previousProducts;
+                currentReviews = previousReviews;
+                showMessage(error.message || 'Failed to remove product', 'error');
+            } finally {
+                delete productActions[asin];
+                renderProducts();
+                renderReviews();
             }
         }
 

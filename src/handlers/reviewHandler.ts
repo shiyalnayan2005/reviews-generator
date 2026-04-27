@@ -20,6 +20,8 @@ export async function handleReviewGenerate(request: Request, env: Env): Promise<
 			return handleError(new ValidationError(`Review not found with id=${id}`));
 		}
 
+		await updateReview(env, id!, 'processing', review.ai_title || '', review.ai_body || '');
+
 		console.log('Review generating started...');
 		const aiBody = await generateReviewWithRetry(env, {
 			title: review.title || '',
@@ -38,6 +40,14 @@ export async function handleReviewGenerate(request: Request, env: Env): Promise<
 
 		throw new Error('AI generation returned empty result');
 	} catch (error) {
+		const id = new URL(request.url).searchParams.get('id');
+		if (id && !isNaN(parseInt(id))) {
+			try {
+				await updateReview(env, id, 'failed', '', '');
+			} catch (updateError) {
+				console.error('Failed to mark review generation as failed:', updateError);
+			}
+		}
 		return handleError(error);
 	}
 }

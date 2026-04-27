@@ -67,6 +67,35 @@ export async function updateReview(env: Env, id: string, status: string, ai_titl
 	}
 }
 
+export async function clearReviewAI(env: Env, id: string): Promise<void> {
+	try {
+		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ? WHERE id = ?`)
+			.bind('pending', '', '', parseInt(id))
+			.run();
+	} catch (error) {
+		throw new DatabaseError(`Failed to clear review AI content: ${error}`);
+	}
+}
+
+export async function deleteReview(env: Env, id: string): Promise<void> {
+	try {
+		await env.DB.prepare(`DELETE FROM reviews WHERE id = ?`).bind(parseInt(id)).run();
+	} catch (error) {
+		throw new DatabaseError(`Failed to delete review: ${error}`);
+	}
+}
+
+export async function deleteProduct(env: Env, asin: string): Promise<void> {
+	try {
+		await env.DB.batch([
+			env.DB.prepare(`DELETE FROM reviews WHERE asin = ?`).bind(asin),
+			env.DB.prepare(`DELETE FROM products WHERE asin = ?`).bind(asin),
+		]);
+	} catch (error) {
+		throw new DatabaseError(`Failed to delete product: ${error}`);
+	}
+}
+
 export async function getPendingReviews(env: Env, limit: number = 10): Promise<Review[]> {
 	try {
 		const result = await env.DB.prepare(`SELECT * FROM reviews WHERE ai_status = ? LIMIT ?`).bind('pending', limit).all<Review>();
