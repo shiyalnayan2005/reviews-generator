@@ -200,7 +200,7 @@ function serveDashboardHTML(): Response {
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
-        .hidden { display: none; }
+        
         .modal {
             position: fixed;
             top: 0;
@@ -266,6 +266,7 @@ function serveDashboardHTML(): Response {
             background: #2563eb;
             color: white;
         }
+        .hidden { display: none; }
         .processing { opacity: 0.6; pointer-events: none; }
         .success { background: #d1fae5; color: #065f46; }
         .error { background: #fee2e2; color: #dc2626; }

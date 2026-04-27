@@ -63,7 +63,7 @@ export async function handleReviewBulkGenerate(request: Request, env: Env): Prom
 				console.log(`Processing review ${review.id}...`);
 
 				// Mark as processing
-				await updateReview(env, review.id, 'processing', '', '');
+				await updateReview(env, review.id.toString(), 'processing', '', '');
 
 				const aiBody = await generateReviewWithRetry(env, {
 					title: review.title || '',
@@ -71,13 +71,13 @@ export async function handleReviewBulkGenerate(request: Request, env: Env): Prom
 					rating: review.rating || 4,
 				});
 
-				await updateReview(env, review.id, 'done', aiBody.title, aiBody.body);
+				await updateReview(env, review.id.toString(), 'done', aiBody.title, aiBody.body);
 				results.push({ id: review.id, status: 'done' });
 
 				console.log(`Completed review ${review.id}`);
 			} catch (err) {
 				console.error(`Failed for ${review.id}:`, err);
-				await updateReview(env, review.id, 'failed', '', '');
+				await updateReview(env, review.id.toString(), 'failed', '', '');
 				results.push({ id: review.id, status: 'failed' });
 			}
 		}

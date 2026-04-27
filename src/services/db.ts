@@ -50,17 +50,17 @@ export async function insertReviews(env: Env, asin: string, reviews: ReviewInser
 export async function getReview(env: Env, id: string): Promise<Review | null> {
 	try {
 		if (!id) return null;
-		const review_data = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?').bind(id).first<Review>();
+		const review_data = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?').bind(parseInt(id)).first<Review>();
 		return review_data || null;
 	} catch (error) {
 		throw new DatabaseError(`Failed to get review: ${error}`);
 	}
 }
 
-export async function updateReview(env: Env, id: string | number, status: string, ai_title: string, ai_body: string = ''): Promise<void> {
+export async function updateReview(env: Env, id: string, status: string, ai_title: string, ai_body: string = ''): Promise<void> {
 	try {
 		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ? WHERE id = ?`)
-			.bind(status, ai_title, ai_body, id)
+			.bind(status, ai_title, ai_body, parseInt(id))
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to update review: ${error}`);
