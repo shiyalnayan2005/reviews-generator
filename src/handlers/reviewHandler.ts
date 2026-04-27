@@ -5,40 +5,67 @@ import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
 import { PROCESSING_CONFIG } from '../config';
 
+export async function generateReviewById(env: Env, id: string): Promise<{ title: string; body: string }> {
+	validateReviewId(id);
+
+	console.log('Review fetching started...');
+	const review = await getReview(env, id);
+	console.log('Review fetching end...', review);
+
+	if (!review) {
+		throw new ValidationError(`Review not found with id=${id}`);
+	}
+
+	await updateReview(env, id, 'processing', review.ai_title || '', review.ai_body || '');
+
+	console.log('Review generating started...');
+	const aiBody = await generateReviewWithRetry(env, {
+		title: review.title || '',
+		body: review.body || '',
+		rating: review.rating || 4,
+	});
+	console.log('Review generating end...');
+
+	if (!aiBody) {
+		throw new Error('AI generation returned empty result');
+	}
+
+	console.log('Updating review...');
+	await updateReview(env, id, 'done', aiBody.title, aiBody.body);
+	console.info(`Updated ${id} review`);
+
+	return aiBody;
+}
+
+export async function processPendingReviews(env: Env, limit: number): Promise<Array<{ id: number; status: 'done' | 'failed' }>> {
+	console.log(`Processing ${limit} pending reviews...`);
+
+	const reviews = await getPendingReviews(env, limit);
+	const results: Array<{ id: number; status: 'done' | 'failed' }> = [];
+
+	for (const review of reviews) {
+		try {
+			console.log(`Processing review ${review.id}...`);
+			await generateReviewById(env, review.id.toString());
+			results.push({ id: review.id, status: 'done' });
+			console.log(`Completed review ${review.id}`);
+		} catch (err) {
+			console.error(`Failed for ${review.id}:`, err);
+			await updateReview(env, review.id.toString(), 'failed', '', '');
+			results.push({ id: review.id, status: 'failed' });
+		}
+	}
+
+	return results;
+}
+
 export async function handleReviewGenerate(request: Request, env: Env): Promise<Response> {
 	try {
 		const url = new URL(request.url);
 		const id = url.searchParams.get('id');
 
-		validateReviewId(id);
-
-		console.log('Review fetching started...');
-		const review = await getReview(env, id!);
-		console.log('Review fetching end...', review);
-
-		if (!review) {
-			return handleError(new ValidationError(`Review not found with id=${id}`));
-		}
-
-		await updateReview(env, id!, 'processing', review.ai_title || '', review.ai_body || '');
-
-		console.log('Review generating started...');
-		const aiBody = await generateReviewWithRetry(env, {
-			title: review.title || '',
-			body: review.body || '',
-			rating: review.rating || 4,
-		});
-		console.log('Review generating end...');
-
-		if (aiBody) {
-			console.log('Updating review...');
-			await updateReview(env, id!, 'done', aiBody.title, aiBody.body);
-			console.info(`Updated ${id} review`);
-
-			return Response.json({ success: true, data: { ...aiBody } });
-		}
-
-		throw new Error('AI generation returned empty result');
+		const aiBody = await generateReviewById(env, id!);
+		return Response.json({ success: true, data: { ...aiBody } });
 	} catch (error) {
 		const id = new URL(request.url).searchParams.get('id');
 		if (id && !isNaN(parseInt(id))) {
@@ -56,40 +83,10 @@ export async function handleReviewBulkGenerate(request: Request, env: Env): Prom
 	try {
 		const url = new URL(request.url);
 		const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), PROCESSING_CONFIG.BATCH_SIZE);
-		const status = url.searchParams.get('status') || 'pending';
 
-		console.log(`Processing ${limit} reviews with status: ${status}...`);
-
-		const reviews = await getPendingReviews(env, limit);
-
-		if (!reviews.length) {
+		const results = await processPendingReviews(env, limit);
+		if (!results.length) {
 			return Response.json({ success: true, message: 'No reviews to process' });
-		}
-
-		const results = [];
-
-		for (const review of reviews) {
-			try {
-				console.log(`Processing review ${review.id}...`);
-
-				// Mark as processing
-				await updateReview(env, review.id.toString(), 'processing', '', '');
-
-				const aiBody = await generateReviewWithRetry(env, {
-					title: review.title || '',
-					body: review.body || '',
-					rating: review.rating || 4,
-				});
-
-				await updateReview(env, review.id.toString(), 'done', aiBody.title, aiBody.body);
-				results.push({ id: review.id, status: 'done' });
-
-				console.log(`Completed review ${review.id}`);
-			} catch (err) {
-				console.error(`Failed for ${review.id}:`, err);
-				await updateReview(env, review.id.toString(), 'failed', '', '');
-				results.push({ id: review.id, status: 'failed' });
-			}
 		}
 
 		return Response.json({

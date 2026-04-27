@@ -1,6 +1,6 @@
 import { handleASINRequest } from './handlers/asinHandler';
 import { handleWebhookRequest } from './handlers/webhookHandler';
-import { handleReviewGenerate, handleReviewBulkGenerate, handleReviewStats } from './handlers/reviewHandler';
+import { handleReviewGenerate, handleReviewBulkGenerate, handleReviewStats, processPendingReviews } from './handlers/reviewHandler';
 import { handleDashboard } from './handlers/dashboardHandler';
 import { handleError } from './middleware/errorHandler';
 
@@ -51,5 +51,19 @@ export default {
 		} catch (error) {
 			return handleError(error);
 		}
+	},
+
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+		ctx.waitUntil(
+			(async () => {
+				console.log(`Scheduled review generation started for cron: ${controller.cron}`);
+				const results = await processPendingReviews(env, 1);
+				if (!results.length) {
+					console.log('Scheduled review generation skipped: no pending reviews.');
+					return;
+				}
+				console.log('Scheduled review generation finished:', results[0]);
+			})(),
+		);
 	},
 } satisfies ExportedHandler<Env>;
