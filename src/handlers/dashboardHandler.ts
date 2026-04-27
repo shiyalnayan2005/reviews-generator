@@ -72,12 +72,13 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			const query = url.searchParams.get('q');
 			const status = url.searchParams.get('status') || undefined;
 			const limit = parseInt(url.searchParams.get('limit') || '50');
+			const offset = parseInt(url.searchParams.get('offset') || '0');
 
 			if (!query) {
 				return handleError(new ValidationError('Search query required'));
 			}
 
-			const reviews = await searchReviews(env, query, status, limit);
+			const reviews = await searchReviews(env, query, status, limit, offset);
 			return Response.json({ success: true, reviews });
 		}
 
@@ -148,6 +149,27 @@ function serveDashboardHTML(): Response {
         .search-section {
             padding: 20px;
             border-bottom: 1px solid #e2e8f0;
+        }
+        .tabs {
+            display: flex;
+            gap: 8px;
+            padding: 16px 20px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .tab-btn {
+            padding: 10px 16px;
+            border: 1px solid #d1d5db;
+            border-bottom: none;
+            background: #f8fafc;
+            border-radius: 6px 6px 0 0;
+            cursor: pointer;
+            color: #475569;
+            font-weight: 600;
+        }
+        .tab-btn.active {
+            background: white;
+            color: #2563eb;
+            border-color: #2563eb;
         }
         .search-input {
             width: 100%;
@@ -312,6 +334,7 @@ function serveDashboardHTML(): Response {
         .pagination {
             display: flex;
             justify-content: center;
+            align-items: center;
             gap: 10px;
             margin-top: 20px;
         }
@@ -322,9 +345,15 @@ function serveDashboardHTML(): Response {
             border-radius: 4px;
             cursor: pointer;
         }
-        .page-btn.active {
-            background: #2563eb;
-            color: white;
+        .page-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .page-label {
+            color: #475569;
+            font-weight: 600;
+            min-width: 80px;
+            text-align: center;
         }
         .hidden { display: none; }
         .processing { opacity: 0.6; pointer-events: none; }
@@ -358,7 +387,12 @@ function serveDashboardHTML(): Response {
             </div>
         </div>
 
-        <div class="search-section">
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="products" onclick="switchTab('products')">Products</button>
+            <button class="tab-btn" data-tab="reviews" onclick="switchTab('reviews')">Reviews</button>
+        </div>
+
+        <div class="search-section hidden" id="reviews-controls">
             <input type="text" id="search-input" class="search-input" placeholder="Search reviews...">
             <div class="filters">
                 <button class="filter-btn active" data-status="all">All</button>
@@ -373,7 +407,7 @@ function serveDashboardHTML(): Response {
             </div>
         </div>
 
-        <div class="products-section">
+        <div class="products-section" id="products-section">
             <h2 class="section-title">Products</h2>
             <table class="table" id="products-table">
                 <thead>
@@ -393,9 +427,10 @@ function serveDashboardHTML(): Response {
                     </tr>
                 </tbody>
             </table>
+            <div class="pagination" id="products-pagination"></div>
         </div>
 
-        <div class="reviews-section">
+        <div class="reviews-section hidden" id="reviews-section">
             <h2 class="section-title">Reviews</h2>
             <table class="table" id="reviews-table">
                 <thead>
@@ -416,6 +451,7 @@ function serveDashboardHTML(): Response {
                     </tr>
                 </tbody>
             </table>
+            <div class="pagination" id="reviews-pagination"></div>
         </div>
     </div>
 
@@ -431,12 +467,16 @@ function serveDashboardHTML(): Response {
         let currentStatus = 'all';
         let currentSearch = '';
         let currentProductAsin = '';
+        let activeTab = 'products';
         let currentProducts = [];
         let currentReviews = [];
         let productActions = {};
         let reviewActions = {};
         let currentProductPage = 0;
         let currentReviewPage = 0;
+        let hasNextProductPage = false;
+        let hasNextReviewPage = false;
+        const PAGE_SIZE = 20;
 
         const icons = {
             eye: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
@@ -472,6 +512,38 @@ function serveDashboardHTML(): Response {
             return actionState === actionName ? icons.spinner : icon;
         }
 
+        function renderPagination(containerId, currentPage, hasNextPage, changeFunctionName) {
+            document.getElementById(containerId).innerHTML = \`
+                <button class="page-btn" onclick="\${changeFunctionName}(-1)" \${currentPage === 0 ? 'disabled' : ''}>Previous</button>
+                <span class="page-label">Page \${currentPage + 1}</span>
+                <button class="page-btn" onclick="\${changeFunctionName}(1)" \${hasNextPage ? '' : 'disabled'}>Next</button>
+            \`;
+        }
+
+        function switchTab(tab) {
+            activeTab = tab;
+            document.querySelectorAll('.tab-btn').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
+            document.getElementById('products-section').classList.toggle('hidden', tab !== 'products');
+            document.getElementById('reviews-section').classList.toggle('hidden', tab !== 'reviews');
+            document.getElementById('reviews-controls').classList.toggle('hidden', tab !== 'reviews');
+            if (tab === 'products' && !currentProducts.length) loadProducts();
+            if (tab === 'reviews' && !currentReviews.length) loadReviews();
+        }
+
+        function changeProductPage(direction) {
+            const nextPage = currentProductPage + direction;
+            if (nextPage < 0 || (direction > 0 && !hasNextProductPage)) return;
+            currentProductPage = nextPage;
+            loadProducts();
+        }
+
+        function changeReviewPage(direction) {
+            const nextPage = currentReviewPage + direction;
+            if (nextPage < 0 || (direction > 0 && !hasNextReviewPage)) return;
+            currentReviewPage = nextPage;
+            loadReviews();
+        }
+
         function renderProducts() {
             const tbody = document.getElementById('products-tbody');
             tbody.innerHTML = currentProducts.map(product => {
@@ -491,6 +563,7 @@ function serveDashboardHTML(): Response {
                     </tr>
                 \`;
             }).join('') || '<tr><td colspan="5" style="text-align: center; padding: 40px;">No products found.</td></tr>';
+            renderPagination('products-pagination', currentProductPage, hasNextProductPage, 'changeProductPage');
         }
 
         function renderReviews() {
@@ -515,6 +588,7 @@ function serveDashboardHTML(): Response {
                     </tr>
                 \`;
             }).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
+            renderPagination('reviews-pagination', currentReviewPage, hasNextReviewPage, 'changeReviewPage');
         }
 
         async function loadStats() {
@@ -533,28 +607,31 @@ function serveDashboardHTML(): Response {
 
         async function loadProducts() {
             try {
-                const data = await fetchJson(\`/api/products?limit=20&offset=\${currentProductPage * 20}\`);
+                const data = await fetchJson(\`/api/products?limit=\${PAGE_SIZE + 1}&offset=\${currentProductPage * PAGE_SIZE}\`);
                 if (data.success) {
-                    currentProducts = data.products;
+                    hasNextProductPage = data.products.length > PAGE_SIZE;
+                    currentProducts = data.products.slice(0, PAGE_SIZE);
                     renderProducts();
                 }
             } catch (error) {
                 console.error('Failed to load products:', error);
+                showMessage(error.message || 'Failed to load products', 'error');
             }
         }
 
         async function loadReviews() {
             try {
                 let url = currentProductAsin
-                    ? '/api/products/reviews?asin=' + encodeURIComponent(currentProductAsin) + '&limit=20'
-                    : '/api/search?q=' + encodeURIComponent(currentSearch || ' ') + '&limit=20';
+                    ? '/api/products/reviews?asin=' + encodeURIComponent(currentProductAsin) + '&limit=' + (PAGE_SIZE + 1) + '&offset=' + (currentReviewPage * PAGE_SIZE)
+                    : '/api/search?q=' + encodeURIComponent(currentSearch || ' ') + '&limit=' + (PAGE_SIZE + 1) + '&offset=' + (currentReviewPage * PAGE_SIZE);
                 if (!currentProductAsin && currentStatus !== 'all') {
                     url += '&status=' + encodeURIComponent(currentStatus);
                 }
 
                 const data = await fetchJson(url);
                 if (data.success) {
-                    currentReviews = data.reviews;
+                    hasNextReviewPage = data.reviews.length > PAGE_SIZE;
+                    currentReviews = data.reviews.slice(0, PAGE_SIZE);
                     renderReviews();
                 }
             } catch (error) {
@@ -665,6 +742,10 @@ function serveDashboardHTML(): Response {
             try {
                 await fetchJson(\`/api/review?id=\${reviewId}\`, { method: 'DELETE' });
                 currentReviews = currentReviews.filter((review) => Number(review.id) !== Number(reviewId));
+                if (!currentReviews.length && currentReviewPage > 0) {
+                    currentReviewPage--;
+                    await loadReviews();
+                }
                 await loadStats();
                 showMessage('Review removed successfully!', 'success');
             } catch (error) {
@@ -695,6 +776,10 @@ function serveDashboardHTML(): Response {
                     document.getElementById('search-input').value = '';
                 }
                 await loadStats();
+                if (!currentProducts.length && currentProductPage > 0) {
+                    currentProductPage--;
+                    await loadProducts();
+                }
                 showMessage('Product removed successfully!', 'success');
             } catch (error) {
                 console.error('Failed to remove product:', error);
@@ -741,8 +826,7 @@ function serveDashboardHTML(): Response {
             try {
                 await Promise.all([
                     loadStats(),
-                    loadProducts(),
-                    loadReviews()
+                    activeTab === 'products' ? loadProducts() : loadReviews()
                 ]);
                 showMessage('Data refreshed successfully!', 'success');
             } catch (error) {
@@ -757,7 +841,9 @@ function serveDashboardHTML(): Response {
         function viewProductReviews(asin) {
             currentProductAsin = asin;
             currentSearch = asin;
+            currentReviewPage = 0;
             document.getElementById('search-input').value = asin;
+            switchTab('reviews');
             loadReviews();
         }
 

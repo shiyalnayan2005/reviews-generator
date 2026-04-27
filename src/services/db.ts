@@ -127,7 +127,7 @@ export async function getProductReviews(env: Env, asin: string, limit: number = 
 	}
 }
 
-export async function searchReviews(env: Env, query: string, status?: string, limit: number = 50): Promise<Review[]> {
+export async function searchReviews(env: Env, query: string, status?: string, limit: number = 50, offset: number = 0): Promise<Review[]> {
 	try {
 		let sql = `SELECT * FROM reviews WHERE (title LIKE ? OR body LIKE ? OR ai_body LIKE ?)`;
 		const params = [`%${query}%`, `%${query}%`, `%${query}%`];
@@ -137,8 +137,9 @@ export async function searchReviews(env: Env, query: string, status?: string, li
 			params.push(status);
 		}
 
-		sql += ` ORDER BY created_at DESC LIMIT ?`;
+		sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
 		params.push(limit.toString());
+		params.push(offset.toString());
 
 		const result = await env.DB.prepare(sql)
 			.bind(...params)
