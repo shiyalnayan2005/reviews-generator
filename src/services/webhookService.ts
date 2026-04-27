@@ -1,6 +1,6 @@
-import { parseWebhookBody } from '../lib/utils';
 import { insertProduct, insertReviews } from './db';
 import { AmazonProductData } from '../types';
+import { DatabaseError } from '../lib/errors';
 
 export interface WebhookPayload {
 	input: string;
@@ -9,12 +9,11 @@ export interface WebhookPayload {
 
 export async function processWebhookPayloads(
 	env: Env,
-	request: Request,
+	payloads: WebhookPayload[],
 ): Promise<{
 	processed: number;
 	total: number;
 }> {
-	const payloads: WebhookPayload[] = await parseWebhookBody(request);
 	console.log(`Processing ${payloads.length} items from webhook`);
 
 	let processed = 0;
@@ -44,5 +43,9 @@ export async function processWebhookPayloads(
 	}
 
 	console.log(`Webhook processed: ${processed}/${total} items`);
+	if (total > 0 && processed === 0) {
+		throw new DatabaseError('Failed to process any webhook items. Check the payload shape and D1 table schema.');
+	}
+
 	return { processed, total };
 }

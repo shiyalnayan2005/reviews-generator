@@ -1,5 +1,6 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
+import { zipSync, strToU8 } from 'fflate';
 import worker from '../src/index';
 
 // For now, you'll need to do something like this to get a correctly-typed
@@ -42,5 +43,55 @@ describe('Reviews Generator Worker', () => {
 		expect(response.status).toBe(400);
 		const data = await response.json();
 		expect(data.error.code).toBe('VALIDATION_ERROR');
+	});
+
+	it('processes zipped JSONL webhook payloads once', async () => {
+		await env.DB.prepare(`
+			CREATE TABLE IF NOT EXISTS products (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				asin TEXT UNIQUE NOT NULL,
+				title TEXT,
+				rating REAL,
+				total_reviews INTEGER,
+				created_at TEXT DEFAULT CURRENT_TIMESTAMP
+			)
+		`).run();
+		await env.DB.prepare(`
+			CREATE TABLE IF NOT EXISTS reviews (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				asin TEXT NOT NULL,
+				reviewer_name TEXT,
+				rating REAL,
+				title TEXT,
+				body TEXT,
+				ai_title TEXT DEFAULT '',
+				ai_body TEXT DEFAULT '',
+				ai_status TEXT DEFAULT 'pending',
+				created_at TEXT DEFAULT CURRENT_TIMESTAMP
+			)
+		`).run();
+
+		const line = JSON.stringify({
+			input: `TEST-${Date.now()}`,
+			result: {
+				name: 'Test Product',
+				average_rating: 4.5,
+				total_reviews: 1,
+				reviews: [{ username: 'Tester', stars: 5, title: 'Great', review: 'Works well' }],
+			},
+		});
+		const body = zipSync({ 'products.jsonl': strToU8(`${line}\n`) });
+		const request = new IncomingRequest('http://example.com/webhook/products', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/zip' },
+			body,
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json();
+		expect(data).toMatchObject({ success: true, processed: 1, total: 1 });
 	});
 });

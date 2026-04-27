@@ -8,7 +8,7 @@ export async function handleWebhookRequest(request: Request, env: Env): Promise<
 		const payloads = await parseWebhookBody(request);
 		await validateWebhookPayload(payloads);
 
-		const result = await processWebhookPayloads(env, request);
+		const result = await processWebhookPayloads(env, payloads);
 
 		return Response.json({
 			success: true,
