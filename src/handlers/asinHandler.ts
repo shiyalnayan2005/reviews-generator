@@ -1,6 +1,7 @@
 import { scrapeASINs } from '../services/scrapingService';
 import { validateASINRequest } from '../middleware/validation';
 import { handleError } from '../middleware/errorHandler';
+import { BRANDS_KEY } from '../config';
 
 export async function handleASINRequest(request: Request, env: Env): Promise<Response> {
 	try {

@@ -1,4 +1,4 @@
-import { getProducts, getProductReviews, searchReviews, getReviewStats } from '../services/db';
+import { getProducts, getProductReviews, getReview, searchReviews, getReviewStats } from '../services/db';
 import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
 
@@ -30,6 +30,20 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 			const reviews = await getProductReviews(env, asin, limit, offset);
 			return Response.json({ success: true, reviews });
+		}
+
+		if (pathname === '/api/review') {
+			const id = url.searchParams.get('id');
+			if (!id) {
+				return handleError(new ValidationError('Review id parameter required'));
+			}
+
+			const review = await getReview(env, id);
+			if (!review) {
+				return handleError(new ValidationError(`Review not found with id=${id}`));
+			}
+
+			return Response.json({ success: true, review });
 		}
 
 		if (pathname === '/api/search') {
@@ -370,13 +384,35 @@ function serveDashboardHTML(): Response {
     <script>
         let currentStatus = 'all';
         let currentSearch = '';
+        let currentProductAsin = '';
         let currentProductPage = 0;
         let currentReviewPage = 0;
 
+        async function fetchJson(url, options = {}) {
+            const response = await fetch(url, options);
+            const contentType = response.headers.get('content-type') || '';
+            const payload = contentType.includes('application/json') ? await response.json() : { error: { message: await response.text() } };
+
+            if (!response.ok || payload.success === false) {
+                throw new Error(payload.error?.message || payload.message || \`Request failed with status \${response.status}\`);
+            }
+
+            return payload;
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? 'N/A').replace(/[&<>"']/g, (char) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[char]));
+        }
+
         async function loadStats() {
             try {
-                const response = await fetch('/api/stats');
-                const data = await response.json();
+                const data = await fetchJson('/api/stats');
                 if (data.success) {
                     document.getElementById('total-reviews').textContent = data.stats.total;
                     document.getElementById('pending-reviews').textContent = data.stats.pending;
@@ -390,18 +426,17 @@ function serveDashboardHTML(): Response {
 
         async function loadProducts() {
             try {
-                const response = await fetch(\`/api/products?limit=20&offset=\${currentProductPage * 20}\`);
-                const data = await response.json();
+                const data = await fetchJson(\`/api/products?limit=20&offset=\${currentProductPage * 20}\`);
                 if (data.success) {
                     const tbody = document.getElementById('products-tbody');
                     tbody.innerHTML = data.products.map(product => \`
                         <tr>
-                            <td>\${product.asin}</td>
-                            <td>\${product.title || 'N/A'}</td>
-                            <td>\${product.rating || 'N/A'}</td>
-                            <td>\${product.total_reviews || 'N/A'}</td>
+                            <td>\${escapeHtml(product.asin)}</td>
+                            <td>\${escapeHtml(product.title)}</td>
+                            <td>\${escapeHtml(product.rating)}</td>
+                            <td>\${escapeHtml(product.total_reviews)}</td>
                             <td>
-                                <button class="btn btn-secondary" onclick="viewProductReviews('\${product.asin}')">View Reviews</button>
+                                <button class="btn btn-secondary" onclick="viewProductReviews('\${escapeHtml(product.asin)}')">View Reviews</button>
                             </td>
                         </tr>
                     \`).join('');
@@ -413,43 +448,40 @@ function serveDashboardHTML(): Response {
 
         async function loadReviews() {
             try {
-                let url = '/api/search?q=' + encodeURIComponent(currentSearch || ' ') + '&limit=20';
-                if (currentStatus !== 'all') {
-                    url += '&status=' + currentStatus;
+                let url = currentProductAsin
+                    ? '/api/products/reviews?asin=' + encodeURIComponent(currentProductAsin) + '&limit=20'
+                    : '/api/search?q=' + encodeURIComponent(currentSearch || ' ') + '&limit=20';
+                if (!currentProductAsin && currentStatus !== 'all') {
+                    url += '&status=' + encodeURIComponent(currentStatus);
                 }
 
-                const response = await fetch(url);
-                const data = await response.json();
+                const data = await fetchJson(url);
                 if (data.success) {
                     const tbody = document.getElementById('reviews-tbody');
                     tbody.innerHTML = data.reviews.map(review => \`
                         <tr>
-                            <td>\${review.id}</td>
-                            <td>\${review.asin}</td>
-                            <td>\${review.title || 'N/A'}</td>
-                            <td>\${review.rating}</td>
-                            <td><span class="status-badge status-\${review.ai_status}">\${review.ai_status}</span></td>
+                            <td>\${escapeHtml(review.id)}</td>
+                            <td>\${escapeHtml(review.asin)}</td>
+                            <td>\${escapeHtml(review.title)}</td>
+                            <td>\${escapeHtml(review.rating)}</td>
+                            <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
                             <td>
                                 <button class="btn btn-primary" onclick="viewReview(\${review.id})">View</button>
-                                \${review.ai_status === 'pending' ? \`<button class="btn btn-secondary" onclick="regenerateReview(\${review.id})">Regenerate</button>\` : ''}
+                                \${review.ai_status === 'pending' ? \`<button class="btn btn-secondary" onclick="regenerateReview(\${review.id}, event)">Regenerate</button>\` : ''}
                             </td>
                         </tr>
-                    \`).join('');
+                    \`).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
                 }
             } catch (error) {
                 console.error('Failed to load reviews:', error);
+                showMessage(error.message || 'Failed to load reviews', 'error');
             }
         }
 
         async function viewReview(reviewId) {
             try {
-                const response = await fetch(\`/review/generate?id=\${reviewId}\`);
-                const data = await response.json();
-
-                if (data.success) {
-                    // Refresh data after successful generation
-                    await refreshData();
-                }
+                const data = await fetchJson(\`/api/review?id=\${reviewId}\`);
+                const review = data.review;
 
                 // Show review details in modal
                 const modal = document.getElementById('review-modal');
@@ -457,29 +489,30 @@ function serveDashboardHTML(): Response {
                 content.innerHTML = \`
                     <div class="review-original">
                         <div class="review-title">Original Review</div>
-                        <div>\${data.data?.original || 'N/A'}</div>
+                        <div class="review-title">\${escapeHtml(review.title)}</div>
+                        <div>\${escapeHtml(review.body)}</div>
                     </div>
                     <div class="review-ai">
                         <div class="review-title">AI Generated Review</div>
-                        <div>\${data.data?.body || 'N/A'}</div>
+                        <div class="review-title">\${escapeHtml(review.ai_title)}</div>
+                        <div>\${escapeHtml(review.ai_body)}</div>
                     </div>
                 \`;
                 modal.classList.remove('hidden');
             } catch (error) {
                 console.error('Failed to view review:', error);
-                alert('Failed to load review details');
+                showMessage(error.message || 'Failed to load review details', 'error');
             }
         }
 
-        async function regenerateReview(reviewId) {
-            const btn = event.target;
+        async function regenerateReview(reviewId, event) {
+            const btn = event?.target || document.activeElement;
             const originalText = btn.textContent;
             btn.textContent = 'Processing...';
             btn.classList.add('processing');
 
             try {
-                const response = await fetch(\`/review/generate?id=\${reviewId}\`);
-                const data = await response.json();
+                const data = await fetchJson(\`/review/generate?id=\${reviewId}\`, { method: 'POST' });
 
                 if (data.success) {
                     await refreshData();
@@ -503,8 +536,7 @@ function serveDashboardHTML(): Response {
             btn.classList.add('processing');
 
             try {
-                const response = await fetch('/review/generate/bulk?limit=5');
-                const data = await response.json();
+                const data = await fetchJson('/review/generate/bulk?limit=5', { method: 'POST' });
 
                 if (data.success) {
                     await refreshData();
@@ -544,7 +576,9 @@ function serveDashboardHTML(): Response {
         }
 
         function viewProductReviews(asin) {
+            currentProductAsin = asin;
             currentSearch = asin;
+            document.getElementById('search-input').value = asin;
             loadReviews();
         }
 
@@ -574,6 +608,7 @@ function serveDashboardHTML(): Response {
         // Event listeners
         document.getElementById('search-input').addEventListener('input', (e) => {
             currentSearch = e.target.value;
+            currentProductAsin = '';
             currentReviewPage = 0;
             loadReviews();
         });
@@ -583,6 +618,7 @@ function serveDashboardHTML(): Response {
                 document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
                 currentStatus = e.target.dataset.status;
+                currentProductAsin = '';
                 currentReviewPage = 0;
                 loadReviews();
             });

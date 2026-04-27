@@ -14,6 +14,7 @@ export interface Review {
 	rating: number | null;
 	title: string | null;
 	body: string | null;
+	ai_title: string | null;
 	ai_body: string | null;
 	ai_status: 'pending' | 'processing' | 'done' | 'failed';
 	created_at: string;

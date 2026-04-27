@@ -11,9 +11,8 @@ export default {
 		const method = request.method;
 
 		try {
-			// Dashboard and API routes
-			if (pathname === '/' || pathname.startsWith('/api/') || pathname === '/dashboard') {
-				return handleDashboard(request, env);
+			if (pathname === '/favicon.ico') {
+				return new Response(null, { status: 204 });
 			}
 
 			// ASIN scraping routes
@@ -21,6 +20,11 @@ export default {
 				if (method === 'GET') {
 					return handleASINRequest(request, env);
 				}
+			}
+
+			// Dashboard and API routes
+			if (pathname === '/' || pathname.startsWith('/api/') || pathname === '/dashboard') {
+				return handleDashboard(request, env);
 			}
 
 			// Webhook routes
