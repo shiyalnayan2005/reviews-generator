@@ -28,6 +28,12 @@ export class DatabaseError extends ReviewsGeneratorError {
 	}
 }
 
+export class ScrapingError extends ReviewsGeneratorError {
+	constructor(message: string, statusCode: number = 502, retryable: boolean = true) {
+		super('SCRAPING_ERROR', message, statusCode, retryable);
+	}
+}
+
 export class AuthenticationError extends ReviewsGeneratorError {
 	constructor(message: string = 'Unauthorized') {
 		super('AUTH_ERROR', message, 401, false);
