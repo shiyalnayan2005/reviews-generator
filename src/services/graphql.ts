@@ -1,7 +1,7 @@
 export async function graphqlRequest(env: Env, query: string, variables?: Record<string, any>): Promise<any> {
 	const maxRetries = 3;
 	let attempt = 0;
-	const url = `https://${env.SHOPIFY_STORE_URL}/admin/api/2026-04/graphql.json`;
+	const url = `https://${env.SHOPIFY_STORE_URL}/admin/api/2025-07/graphql.json`;
 
 	while (attempt < maxRetries) {
 		try {
