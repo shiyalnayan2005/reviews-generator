@@ -382,6 +382,10 @@ function serveDashboardHTML(): Response {
                 font-size: 1.05em;
                 color: #1e293b;
             }
+            .review-email {
+              color: blue;
+              margin-bottom: 10px;
+          }
             .review-box {
                 background: white;
                 border: 1px solid #e2e8f0;
