@@ -25,7 +25,6 @@ export async function processWebhookPayloads(
 			const asin = item.input;
 			const result: AmazonProductData = typeof item.result === 'string' ? JSON.parse(item.result) : item.result;
 
-			// want to fetch shopify product from upc metching stored in product variant metafield and store the handle in product table to use it later for review generation prompt
 			const handle = await fetchShopifyProductHandleByUPC(env, result.product_information.upc);
 
 			await insertProduct(env, {

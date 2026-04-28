@@ -1,5 +1,6 @@
 import { Review, Product, ProductInsertData, ReviewInsertData, D1BatchResult } from '../types';
 import { DatabaseError } from '../lib/errors';
+import { AIReviewOutput } from './aiService';
 
 export async function insertProduct(env: Env, data: ProductInsertData): Promise<void> {
 	try {
@@ -57,10 +58,10 @@ export async function getReview(env: Env, id: string): Promise<Review | null> {
 	}
 }
 
-export async function updateReview(env: Env, id: string, status: string, ai_title: string, ai_body: string = ''): Promise<void> {
+export async function updateReview(env: Env, id: string, status: string, aiReview: AIReviewOutput): Promise<void> {
 	try {
-		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ? WHERE id = ?`)
-			.bind(status, ai_title, ai_body, parseInt(id))
+		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, ai_email = ? WHERE id = ?`)
+			.bind(status, aiReview.title, aiReview.body, aiReview.email, parseInt(id))
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to update review: ${error}`);
@@ -69,8 +70,8 @@ export async function updateReview(env: Env, id: string, status: string, ai_titl
 
 export async function clearReviewAI(env: Env, id: string): Promise<void> {
 	try {
-		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ? WHERE id = ?`)
-			.bind('pending', '', '', parseInt(id))
+		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, ai_email = ? WHERE id = ?`)
+			.bind('pending', '', '', '', parseInt(id))
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to clear review AI content: ${error}`);

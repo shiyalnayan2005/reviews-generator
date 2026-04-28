@@ -1,9 +1,8 @@
-export async function generateAIReview(
-	env: Env,
-	input: { title: string; body: string; rating: number },
-): Promise<{ title: string; body: string }> {
+import { Review } from '../types';
+
+export async function generateAIReview(env: Env, review: Review): Promise<{ title: string; body: string; email: string }> {
 	// Extract key nouns from the original review (simple approach)
-	const words = (input.body || '').toLowerCase().split(/\s+/);
+	const words = (review.body || '').toLowerCase().split(/\s+/);
 	const keyNouns = words
 		.filter((w) => w.length > 3 && !['this', 'that', 'with', 'have', 'from', 'they', 'what', 'when'].includes(w))
 		.slice(0, 5);
@@ -13,9 +12,9 @@ export async function generateAIReview(
     
     --- INPUT ---
     Original Review:
-    "${input.body}"
+    "${review.body}"
     
-    Rating: ${input.rating} stars
+    Rating: ${review.rating} stars
     Required Keywords: ${keyNouns.join(', ')}
     
     --- TASK ---
@@ -46,6 +45,7 @@ export async function generateAIReview(
     Return ONLY valid JSON:
     
     {
+      "email": "<fake email based on this username: ${review.reviewer_name}>",
       "title": "<rewritten small title>",
       "body": "<rewritten review text>"
     }
@@ -77,10 +77,10 @@ export async function generateAIReview(
 
 	try {
 		parsed = JSON.parse(text);
-		if (parsed.title && parsed.body) {
+		if (parsed.title && parsed.body && parsed.email) {
 			return { ...parsed };
 		} else {
-			return { title: input.title, body: text.toString() };
+			return { title: '', body: '', email: '' };
 		}
 	} catch {
 		throw new Error('Invalid AI response');

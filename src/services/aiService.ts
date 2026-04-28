@@ -2,21 +2,17 @@ import { generateAIReview } from '../lib/ai-client';
 import { AIError } from '../lib/errors';
 import { retryWithBackoff } from '../lib/retryUtils';
 import { PROCESSING_CONFIG } from '../config';
-
-export interface AIReviewInput {
-	title: string;
-	body: string;
-	rating: number;
-}
+import { Review } from '../types';
 
 export interface AIReviewOutput {
 	title: string;
 	body: string;
+	email?: string;
 }
 
-export async function generateReviewWithRetry(env: Env, input: AIReviewInput): Promise<AIReviewOutput> {
+export async function generateReviewWithRetry(env: Env, review: Review): Promise<AIReviewOutput> {
 	try {
-		return await retryWithBackoff(() => generateAIReview(env, input), {
+		return await retryWithBackoff(() => generateAIReview(env, review), {
 			maxAttempts: PROCESSING_CONFIG.MAX_RETRIES,
 			baseDelayMs: PROCESSING_CONFIG.RETRY_DELAY_MS,
 			maxDelayMs: PROCESSING_CONFIG.MAX_RETRY_DELAY_MS,
