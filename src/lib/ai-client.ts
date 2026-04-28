@@ -17,42 +17,55 @@ export async function generateAIReview(env: Env, review: Review): Promise<{ titl
     Rating: ${review.rating} stars
     Required Keywords: ${keyNouns.join(', ')}
     
+    Reviewer Name:
+    "${review.reviewer_name}"
+    
     --- TASK ---
     Rewrite the review so it keeps the SAME meaning and sentiment, but sounds like a DIFFERENT PERSON wrote it.
     
-    --- HARD RULES (MUST FOLLOW) ---
-    1. DO NOT copy any sentence or phrase longer than 3 consecutive words
-    2. DO NOT reuse the same sentence structure or order
-    3. DO NOT start with similar words or phrasing
-    4. CHANGE the flow of ideas (reorder, merge, or split sentences)
-    5. USE the required keywords naturally
-    6. KEEP the same sentiment (positive/negative tone must match rating)
-    7. MAKE it sound casual, human, and slightly imperfect
-    8. AVOID robotic or generic phrases
-    9. ADD small personal tone variations (like opinions or context)
+    --- HARD RULES (STRICT) ---
+    1. DO NOT copy any phrase longer than 3 consecutive words from the original
+    2. DO NOT reuse sentence structure or flow
+    3. CHANGE order of ideas and phrasing completely
+    4. KEEP meaning and sentiment aligned with rating
+    5. USE at least 2–4 required keywords naturally inside the review
+    6. WRITE in a casual, human tone with slight imperfections
+    7. AVOID generic, robotic, or templated wording
+    8. ADD small natural variation (personal touch, opinion, or context)
+    
+    --- EMAIL RULES (STRICT) ---
+    - Generate a realistic personal email based on the reviewer name
+    - MUST look like a real human email
+    - MUST NOT use placeholder or fake domains like:
+      example.com, test.com, dummy.com, sample.com
+    - MUST NOT include the word "example", "test", or random numbers like 12345
+    - Keep it clean, simple, and believable
+    - Format: lowercase, no spaces
+    
+    --- TITLE RULES ---
+    - Short, natural, human-written
+    - Not generic (avoid: "Great product", "Good quality")
     
     --- LENGTH RULE ---
-    - Output must be slightly longer than the original
-    - Use 1–3 sentences max (natural review style)
+    - Slightly longer than original
+    - 1–3 sentences max
     
-    --- SELF-CHECK (CRITICAL) ---
+    --- SELF-CHECK (MANDATORY) ---
     Before finalizing:
-    - If output looks similar to original → REWRITE again
-    - If sentence structure feels similar → REWRITE again
-    - If wording overlaps too much → REWRITE again
+    - If wording overlaps with original → REWRITE
+    - If structure feels similar → REWRITE
+    - If email looks fake/unrealistic → REWRITE
     
-    --- OUTPUT FORMAT (STRICT JSON) ---
-    Return ONLY valid JSON:
-    
+    --- OUTPUT FORMAT (STRICT JSON ONLY) ---
     {
-      "email": "<fake email based on this username: ${review.reviewer_name}>",
-      "title": "<rewritten small title>",
-      "body": "<rewritten review text>"
+      "email": "<realistic personal email>",
+      "title": "<rewritten natural title>",
+      "body": "<rewritten review>"
     }
     
-    DO NOT return anything else.
     DO NOT include explanations.
-    `;
+    DO NOT return anything outside JSON.
+  `;
 
 	const response = await fetch(
 		`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${env.GEMINI_API_KEY}`,
