@@ -34,10 +34,14 @@ export async function generateAIReview(env: Env, review: Review): Promise<{ titl
     8. ADD small natural variation (personal touch, opinion, or context)
     
     --- EMAIL RULES (STRICT) ---
-    - Generate a realistic personal email based ONLY on the reviewer name
-    - Use ONLY name-based patterns (first name, last name, initials)
-    - DO NOT add extra words like: mail, inbox, official, user, account, city names, etc.
-    - DO NOT add unrelated words (e.g., denver, india, shop, store, etc.)
+    - Email MUST be derived from the reviewer name only
+    - MUST include at least part of the real name (first name, last name, or initials)
+
+    - DO NOT use generic or role-based words such as:
+      customer, user, admin, support, mail, contact, info, hello, test, demo
+
+    - DO NOT invent unrelated words (no locations, no random nouns)
+    - DO NOT use single-letter names like "a", "b", etc.
 
     - Allowed formats:
       firstname.lastname@provider
@@ -45,9 +49,8 @@ export async function generateAIReview(env: Env, review: Review): Promise<{ titl
       firstinitiallastname@provider
       firstname.lastname<number>@provider (only if needed)
 
-    - Keep it simple, clean, and human-like
-    - No unnecessary dots or repeated segments
-    - No random words between name parts
+    - Email username MUST be at least 5 characters long
+    - Keep it clean, natural, and human-like
 
     - Allowed providers only:
       gmail.com, yahoo.com, outlook.com, protonmail.com
