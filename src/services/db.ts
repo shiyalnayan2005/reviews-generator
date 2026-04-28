@@ -5,11 +5,11 @@ export async function insertProduct(env: Env, data: ProductInsertData): Promise<
 	try {
 		await env.DB.prepare(
 			`
-      INSERT OR IGNORE INTO products (asin, title, rating, total_reviews)
-      VALUES (?, ?, ?, ?)
+      INSERT OR IGNORE INTO products (asin, title, handle, rating, total_reviews)
+      VALUES (?, ?, ?, ?, ?)
     `,
 		)
-			.bind(data.asin, data.name || null, data.average_rating || null, data.total_reviews || null)
+			.bind(data.asin, data.name || null, data.handle || null, data.average_rating || null, data.total_reviews || null)
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to insert product: ${error}`);
@@ -19,8 +19,8 @@ export async function insertProduct(env: Env, data: ProductInsertData): Promise<
 export async function insertReviews(env: Env, asin: string, reviews: ReviewInsertData[]): Promise<number> {
 	try {
 		const stmt = env.DB.prepare(`
-    INSERT INTO reviews (asin, reviewer_name, rating, title, body)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO reviews (asin, reviewer_name, email, rating, title, body)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
 		const batch = reviews.map((r) => {
@@ -37,7 +37,7 @@ export async function insertReviews(env: Env, asin: string, reviews: ReviewInser
 						.filter(Boolean)
 						.find((line: string) => !line.includes('The media could not be loaded') && !line.includes('Read more') && line.trim())
 				: '';
-			return stmt.bind(asin, r.username || 'Anonymous', parseFloat(String(r.stars)) || 0, title, review);
+			return stmt.bind(asin, r.username || 'Anonymous', r.email || '', parseFloat(String(r.stars)) || 0, title, review);
 		});
 
 		const results = await env.DB.batch(batch);

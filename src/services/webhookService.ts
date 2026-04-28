@@ -1,6 +1,7 @@
 import { insertProduct, insertReviews } from './db';
 import { AmazonProductData } from '../types';
 import { DatabaseError } from '../lib/errors';
+import { fetchShopifyProductHandleByUPC } from './shopify';
 
 export interface WebhookPayload {
 	input: string;
@@ -24,15 +25,23 @@ export async function processWebhookPayloads(
 			const asin = item.input;
 			const result: AmazonProductData = typeof item.result === 'string' ? JSON.parse(item.result) : item.result;
 
+			// want to fetch shopify product from upc metching stored in product variant metafield and store the handle in product table to use it later for review generation prompt
+			const handle = await fetchShopifyProductHandleByUPC(env, result.product_information.upc);
+
 			await insertProduct(env, {
 				asin,
 				name: result.name || '',
+				handle: handle,
 				average_rating: result.average_rating,
 				total_reviews: result.total_reviews,
 			});
 
 			if (result.reviews?.length) {
-				await insertReviews(env, asin, result.reviews);
+				await insertReviews(
+					env,
+					asin,
+					result.reviews.map((r) => ({ ...r, email: '' })),
+				);
 			}
 
 			processed++;
