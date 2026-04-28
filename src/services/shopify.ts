@@ -18,8 +18,6 @@ export async function fetchShopifyProductHandleByUPC(env: Env, upc: string): Pro
     `;
 		const result = await graphqlRequest(env, graphqlQuery, { search });
 		const data = await result.json();
-		console.log({ data });
-		console.log({ productVariant: data.data.productVariants.edges[0] });
 		return data.data.productVariants.edges[0]?.node.product.handle || '';
 	} catch (error) {
 		console.error(`Failed to fetch Shopify product handle for UPC ${upc}:`, error);

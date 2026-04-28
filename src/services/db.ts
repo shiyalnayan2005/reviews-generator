@@ -60,7 +60,7 @@ export async function getReview(env: Env, id: string): Promise<Review | null> {
 
 export async function updateReview(env: Env, id: string, status: string, aiReview: AIReviewOutput): Promise<void> {
 	try {
-		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, ai_email = ? WHERE id = ?`)
+		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, email = ? WHERE id = ?`)
 			.bind(status, aiReview.title, aiReview.body, aiReview.email, parseInt(id))
 			.run();
 	} catch (error) {
@@ -70,7 +70,7 @@ export async function updateReview(env: Env, id: string, status: string, aiRevie
 
 export async function clearReviewAI(env: Env, id: string): Promise<void> {
 	try {
-		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, ai_email = ? WHERE id = ?`)
+		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, email = ? WHERE id = ?`)
 			.bind('pending', '', '', '', parseInt(id))
 			.run();
 	} catch (error) {

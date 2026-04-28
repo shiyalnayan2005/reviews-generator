@@ -1,4 +1,13 @@
-import { clearReviewAI, deleteProduct, deleteReview, getProducts, getProductReviews, getReview, searchReviews, getReviewStats } from '../services/db';
+import {
+	clearReviewAI,
+	deleteProduct,
+	deleteReview,
+	getProducts,
+	getProductReviews,
+	getReview,
+	searchReviews,
+	getReviewStats,
+} from '../services/db';
 import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
 
@@ -659,6 +668,7 @@ function serveDashboardHTML(): Response {
                     <div class="review-ai">
                         <div class="review-title">AI Generated Review</div>
                         <div class="review-title">\${escapeHtml(review.ai_title)}</div>
+                        <div class="review-email">\${escapeHtml(review.email)}</div>
                         <div>\${escapeHtml(review.ai_body)}</div>
                     </div>
                 \`;
@@ -684,7 +694,7 @@ function serveDashboardHTML(): Response {
 
                 if (data.success) {
                     currentReviews = currentReviews.map((review) => Number(review.id) === Number(reviewId)
-                        ? { ...review, ai_status: 'done', ai_title: data.data?.title || review.ai_title, ai_body: data.data?.body || review.ai_body }
+                        ? { ...review, ai_status: 'done', ai_title: data.data?.title || review.ai_title, ai_body: data.data?.body || review.ai_body, email: data.data?.email || review.email }
                         : review
                     );
                     renderReviews();
