@@ -3,6 +3,7 @@ import { handleWebhookRequest } from './handlers/webhookHandler';
 import { handleReviewGenerate, handleReviewBulkGenerate, handleReviewStats, processPendingReviews } from './handlers/reviewHandler';
 import { handleDashboard } from './handlers/dashboardHandler';
 import { handleError } from './middleware/errorHandler';
+import { exportReviews } from './handlers/exportHandler';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -45,6 +46,11 @@ export default {
 				if (method === 'GET' && pathname === '/review/stats') {
 					return handleReviewStats(request, env);
 				}
+			}
+
+			// Export route
+			if (method === 'GET' && pathname.startsWith('/export')) {
+				return exportReviews(env);
 			}
 
 			return new Response('Not Found', { status: 404 });

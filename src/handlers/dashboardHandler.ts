@@ -458,6 +458,7 @@ function serveDashboardHTML(): Response {
             <div class="header">
                 <h1>Reviews Generator Dashboard</h1>
                 <p>Monitor and manage product reviews processing</p>
+                <a href="/export" class="btn btn-primary" target="_blank">Export Reviews</a>
             </div>
 
             <div class="stats" id="stats">
