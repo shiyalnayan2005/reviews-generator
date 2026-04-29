@@ -36,7 +36,9 @@ export async function getProductsForShopifyUpdate(env: Env, limit: number = 25):
       SELECT asin, upc_code, handle
       FROM products
       WHERE upc_code IS NOT NULL AND TRIM(upc_code) != ''
-      ORDER BY created_at DESC
+      ORDER BY
+        CASE WHEN handle IS NULL OR TRIM(handle) = '' THEN 0 ELSE 1 END,
+        created_at DESC
       LIMIT ?
     `,
 		)
