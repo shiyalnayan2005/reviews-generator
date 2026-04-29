@@ -4,6 +4,7 @@ import { handleReviewGenerate, handleReviewBulkGenerate, handleReviewStats, proc
 import { handleDashboard } from './handlers/dashboardHandler';
 import { handleError } from './middleware/errorHandler';
 import { exportReviews } from './handlers/exportHandler';
+import { fetchShopifyProductHandleByUPC } from './services/shopify';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
