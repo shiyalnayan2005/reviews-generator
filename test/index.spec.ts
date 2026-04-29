@@ -51,6 +51,8 @@ describe('Reviews Generator Worker', () => {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				asin TEXT UNIQUE NOT NULL,
 				title TEXT,
+				handle TEXT,
+				upc_code TEXT,
 				rating REAL,
 				total_reviews INTEGER,
 				created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -61,6 +63,7 @@ describe('Reviews Generator Worker', () => {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				asin TEXT NOT NULL,
 				reviewer_name TEXT,
+				email TEXT,
 				rating REAL,
 				title TEXT,
 				body TEXT,

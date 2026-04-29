@@ -3,6 +3,7 @@ export interface Product {
 	asin: string;
 	title: string | null;
 	handle: string | null;
+	upc_code: string | null;
 	rating: number | null;
 	total_reviews: number | null;
 	created_at: string;
@@ -30,7 +31,7 @@ export interface ScraperAPIResponse {
 export interface AmazonProductData {
 	asin?: string;
 	name?: string;
-	product_information: {
+	product_information?: {
 		upc: string;
 	};
 	average_rating?: number;
@@ -50,6 +51,7 @@ export interface ProductInsertData {
 	asin: string;
 	name?: string;
 	handle?: string;
+	upc_code?: string;
 	average_rating?: number;
 	total_reviews?: number;
 }

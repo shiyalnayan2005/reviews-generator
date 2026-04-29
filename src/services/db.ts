@@ -2,18 +2,57 @@ import { Review, Product, ProductInsertData, ReviewInsertData, D1BatchResult } f
 import { DatabaseError } from '../lib/errors';
 import { AIReviewOutput } from './aiService';
 
+export interface ShopifyProductUpdateCandidate {
+	asin: string;
+	upc_code: string;
+	handle: string | null;
+}
+
 export async function insertProduct(env: Env, data: ProductInsertData): Promise<void> {
 	try {
 		await env.DB.prepare(
 			`
-      INSERT OR IGNORE INTO products (asin, title, handle, rating, total_reviews)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO products (asin, title, handle, upc_code, rating, total_reviews)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(asin) DO UPDATE SET
+        title = excluded.title,
+        handle = excluded.handle,
+        upc_code = excluded.upc_code,
+        rating = excluded.rating,
+        total_reviews = excluded.total_reviews
     `,
 		)
-			.bind(data.asin, data.name || null, data.handle || null, data.average_rating || null, data.total_reviews || null)
+			.bind(data.asin, data.name || null, data.handle || null, data.upc_code || null, data.average_rating || null, data.total_reviews || null)
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to insert product: ${error}`);
+	}
+}
+
+export async function getProductsForShopifyUpdate(env: Env, limit: number = 25): Promise<ShopifyProductUpdateCandidate[]> {
+	try {
+		const result = await env.DB.prepare(
+			`
+      SELECT asin, upc_code, handle
+      FROM products
+      WHERE upc_code IS NOT NULL AND TRIM(upc_code) != ''
+      ORDER BY created_at DESC
+      LIMIT ?
+    `,
+		)
+			.bind(limit)
+			.all<ShopifyProductUpdateCandidate>();
+		return result.results || [];
+	} catch (error) {
+		throw new DatabaseError(`Failed to get products for Shopify update: ${error}`);
+	}
+}
+
+export async function updateProductShopifyHandle(env: Env, asin: string, handle: string): Promise<void> {
+	try {
+		await env.DB.prepare(`UPDATE products SET handle = ? WHERE asin = ?`).bind(handle || null, asin).run();
+	} catch (error) {
+		throw new DatabaseError(`Failed to update Shopify product handle: ${error}`);
 	}
 }
 

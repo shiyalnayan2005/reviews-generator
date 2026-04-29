@@ -7,9 +7,12 @@ import {
 	getReview,
 	searchReviews,
 	getReviewStats,
+	getProductsForShopifyUpdate,
+	updateProductShopifyHandle,
 } from '../services/db';
 import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
+import { fetchShopifyProductHandleByUPC } from '../services/shopify';
 
 export async function handleDashboard(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
@@ -26,6 +29,12 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 			const products = await getProducts(env, limit, offset);
 			return Response.json({ success: true, products });
+		}
+
+		if (pathname === '/api/products/shopify-info' && request.method === 'POST') {
+			const limit = parseInt(url.searchParams.get('limit') || '25');
+			const result = await updateShopifyProductInformation(env, limit);
+			return Response.json({ success: true, ...result });
 		}
 
 		if (pathname === '/api/products/reviews') {
@@ -100,6 +109,47 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 	} catch (error) {
 		return handleError(error);
 	}
+}
+
+async function updateShopifyProductInformation(
+	env: Env,
+	limit: number,
+): Promise<{
+	processed: number;
+	updated: number;
+	notFound: number;
+	skipped: number;
+	total: number;
+}> {
+	const safeLimit = Math.min(Math.max(limit || 25, 1), 100);
+	const products = await getProductsForShopifyUpdate(env, safeLimit);
+	let updated = 0;
+	let notFound = 0;
+	let skipped = 0;
+
+	for (const product of products) {
+		if (!product.upc_code) {
+			skipped++;
+			continue;
+		}
+
+		const handle = await fetchShopifyProductHandleByUPC(env, product.upc_code);
+		if (!handle) {
+			notFound++;
+			continue;
+		}
+
+		await updateProductShopifyHandle(env, product.asin, handle);
+		updated++;
+	}
+
+	return {
+		processed: products.length,
+		updated,
+		notFound,
+		skipped,
+		total: products.length,
+	};
 }
 
 function serveDashboardHTML(): Response {
@@ -212,8 +262,19 @@ function serveDashboardHTML(): Response {
             }
             .section-title {
                 font-size: 1.5em;
-                margin-bottom: 20px;
+                margin: 0 0 20px;
                 color: #1f2937;
+            }
+            .section-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
+                margin-bottom: 20px;
+            }
+            .section-header .section-title {
+                margin-bottom: 0;
             }
             .table {
                 width: 100%;
@@ -501,12 +562,17 @@ function serveDashboardHTML(): Response {
             </div>
 
             <div class="products-section" id="products-section">
-                <h2 class="section-title">Products</h2>
+                <div class="section-header">
+                    <h2 class="section-title">Products</h2>
+                    <button class="btn btn-primary" id="shopify-update-btn" onclick="updateShopifyProductInfo()">Update Shopify Handles</button>
+                </div>
                 <table class="table" id="products-table">
                     <thead>
                         <tr>
                             <th>ASIN</th>
                             <th>Title</th>
+                            <th>UPC</th>
+                            <th>Handle</th>
                             <th>Rating</th>
                             <th>Total Reviews</th>
                             <th>Actions</th>
@@ -514,7 +580,7 @@ function serveDashboardHTML(): Response {
                     </thead>
                     <tbody id="products-tbody">
                         <tr>
-                            <td colspan="5" style="text-align: center; padding: 40px;">
+                            <td colspan="7" style="text-align: center; padding: 40px;">
                                 <div class="loading"></div> Loading products...
                             </td>
                         </tr>
@@ -645,6 +711,8 @@ function serveDashboardHTML(): Response {
                         <tr>
                             <td>\${escapeHtml(product.asin)}</td>
                             <td>\${escapeHtml(product.title)}</td>
+                            <td>\${escapeHtml(product.upc_code)}</td>
+                            <td>\${escapeHtml(product.handle)}</td>
                             <td>\${escapeHtml(product.rating)}</td>
                             <td>\${escapeHtml(product.total_reviews)}</td>
                             <td>
@@ -655,7 +723,7 @@ function serveDashboardHTML(): Response {
                             </td>
                         </tr>
                     \`;
-                }).join('') || '<tr><td colspan="5" style="text-align: center; padding: 40px;">No products found.</td></tr>';
+                }).join('') || '<tr><td colspan="7" style="text-align: center; padding: 40px;">No products found.</td></tr>';
                 renderPagination('products-pagination', currentProductPage, hasNextProductPage, 'changeProductPage');
             }
 
@@ -908,6 +976,27 @@ function serveDashboardHTML(): Response {
                 } finally {
                     btn.textContent = originalText;
                     btn.classList.remove('processing');
+                }
+            }
+
+            async function updateShopifyProductInfo() {
+                const btn = document.getElementById('shopify-update-btn');
+                const originalText = btn.textContent;
+                btn.textContent = 'Updating...';
+                btn.classList.add('processing');
+                btn.disabled = true;
+
+                try {
+                    const data = await fetchJson('/api/products/shopify-info?limit=25', { method: 'POST' });
+                    await loadProducts();
+                    showMessage(\`Updated \${data.updated} handles. \${data.notFound} UPCs not found.\`, 'success');
+                } catch (error) {
+                    console.error('Failed to update Shopify product information:', error);
+                    showMessage(error.message || 'Failed to update Shopify handles', 'error');
+                } finally {
+                    btn.textContent = originalText;
+                    btn.classList.remove('processing');
+                    btn.disabled = false;
                 }
             }
 
