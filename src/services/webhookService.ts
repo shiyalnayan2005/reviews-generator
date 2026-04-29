@@ -24,14 +24,15 @@ export async function processWebhookPayloads(
 		try {
 			const asin = item.input;
 			const result: AmazonProductData = typeof item.result === 'string' ? JSON.parse(item.result) : item.result;
+			const upcCode = result.product_information?.upc?.trim() || '';
 
-			const handle = await fetchShopifyProductHandleByUPC(env, result.product_information?.upc || '');
+			const handle = await fetchShopifyProductHandleByUPC(env, upcCode);
 
 			await insertProduct(env, {
 				asin,
 				name: result.name || '',
 				handle: handle,
-				upc_code: result.product_information?.upc || '',
+				upc_code: upcCode,
 				average_rating: result.average_rating,
 				total_reviews: result.total_reviews,
 			});

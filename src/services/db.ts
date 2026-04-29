@@ -60,33 +60,50 @@ export async function updateProductShopifyHandle(env: Env, asin: string, handle:
 
 export async function insertReviews(env: Env, asin: string, reviews: ReviewInsertData[]): Promise<number> {
 	try {
-		const stmt = env.DB.prepare(`
-    INSERT INTO reviews (asin, reviewer_name, email, rating, title, body)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
+		const insertStmt = env.DB.prepare(`
+			INSERT INTO reviews (asin, reviewer_name, email, rating, title, body)
+			SELECT ?, ?, ?, ?, ?, ?
+			WHERE NOT EXISTS (
+				SELECT 1 FROM reviews WHERE asin = ? AND title = ?
+			)
+		`);
 
 		const batch = reviews.map((r) => {
-			const title = r.title
-				? r.title
-						.split('\n')
-						.map((line: string) => line.trim())
-						.find((line: string) => !line.includes('out of 5 stars') && line.trim())
-				: '';
-			const review = r.review
-				? r.review
-						.split('\n')
-						.map((line: string) => line.trim())
-						.filter(Boolean)
-						.find((line: string) => !line.includes('The media could not be loaded') && !line.includes('Read more') && line.trim())
-				: '';
-			return stmt.bind(asin, r.username || 'Anonymous', r.email || '', parseFloat(String(r.stars)) || 0, title, review);
+			const title = normalizeReviewTitle(r.title);
+			const review = normalizeReviewBody(r.review);
+			const rating = normalizeReviewRating(r.stars);
+			return insertStmt.bind(asin, r.username || 'Anonymous', r.email || '', rating, title, review, asin, title);
 		});
 
 		const results = await env.DB.batch(batch);
-		return results.filter((r: D1BatchResult) => r.success).length;
+		return results.reduce((count: number, result: D1BatchResult) => count + (result.success ? result.meta?.changes || 0 : 0), 0);
 	} catch (error) {
 		throw new DatabaseError(`Failed to insert reviews: ${error}`);
 	}
+}
+
+function normalizeReviewTitle(title?: string): string {
+	return title
+		? title
+				.split('\n')
+				.map((line: string) => line.trim())
+				.find((line: string) => !line.includes('out of 5 stars') && line.trim()) || ''
+		: '';
+}
+
+function normalizeReviewBody(review?: string): string {
+	return review
+		? review
+				.split('\n')
+				.map((line: string) => line.trim())
+				.filter(Boolean)
+				.find((line: string) => !line.includes('The media could not be loaded') && !line.includes('Read more') && line.trim()) || ''
+		: '';
+}
+
+function normalizeReviewRating(stars?: string | number): number {
+	const rating = parseFloat(String(stars));
+	return Number.isFinite(rating) && rating > 0 ? rating : 1;
 }
 
 export async function getReview(env: Env, id: string): Promise<Review | null> {

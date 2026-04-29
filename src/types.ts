@@ -68,4 +68,7 @@ export interface D1BatchResult {
 	success: boolean;
 	error?: string;
 	results?: any[];
+	meta?: {
+		changes?: number;
+	};
 }
