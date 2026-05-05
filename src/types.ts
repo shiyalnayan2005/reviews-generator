@@ -33,6 +33,7 @@ export interface AmazonProductData {
 	name?: string;
 	product_information?: {
 		upc: string;
+		UPC: string;
 	};
 	average_rating?: number;
 	total_reviews?: number;

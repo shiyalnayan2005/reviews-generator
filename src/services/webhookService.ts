@@ -22,9 +22,9 @@ export async function processWebhookPayloads(
 
 	for (const item of payloads) {
 		try {
-			const asin = item.input;
+			const asin = item.input.split('/').pop()?.trim() || '';
 			const result: AmazonProductData = typeof item.result === 'string' ? JSON.parse(item.result) : item.result;
-			const upcCode = result.product_information?.upc?.trim() || '';
+			const upcCode = result.product_information?.upc?.trim() || result.product_information?.UPC?.trim() || '';
 
 			const handle = await fetchShopifyProductHandleByUPC(env, upcCode);
 
