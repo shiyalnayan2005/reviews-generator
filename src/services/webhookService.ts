@@ -33,8 +33,6 @@ export async function processWebhookPayloads(
 				name: result.name || '',
 				handle: handle,
 				upc_code: upcCode,
-				average_rating: result.average_rating,
-				total_reviews: result.total_reviews,
 			});
 
 			if (result.reviews?.length) {

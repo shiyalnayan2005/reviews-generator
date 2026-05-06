@@ -4,8 +4,7 @@ export interface Product {
 	title: string | null;
 	handle: string | null;
 	upc_code: string | null;
-	rating: number | null;
-	total_reviews: number | null;
+	review_count?: number;
 	created_at: string;
 }
 
@@ -53,8 +52,6 @@ export interface ProductInsertData {
 	name?: string;
 	handle?: string;
 	upc_code?: string;
-	average_rating?: number;
-	total_reviews?: number;
 }
 
 export interface ReviewInsertData {

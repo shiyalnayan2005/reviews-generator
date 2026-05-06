@@ -10,19 +10,20 @@ const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 async function resetWebhookTables(): Promise<void> {
 	await env.DB.prepare(`DROP TABLE IF EXISTS reviews`).run();
 	await env.DB.prepare(`DROP TABLE IF EXISTS products`).run();
-	await env.DB.prepare(`
+	await env.DB.prepare(
+		`
 		CREATE TABLE products (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			asin TEXT UNIQUE NOT NULL,
 			title TEXT,
 			handle TEXT,
 			upc_code TEXT,
-			rating REAL,
-			total_reviews INTEGER,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
-	`).run();
-	await env.DB.prepare(`
+	`,
+	).run();
+	await env.DB.prepare(
+		`
 		CREATE TABLE reviews (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			asin TEXT NOT NULL,
@@ -36,7 +37,8 @@ async function resetWebhookTables(): Promise<void> {
 			ai_status TEXT DEFAULT 'pending',
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
-	`).run();
+	`,
+	).run();
 }
 
 describe('Reviews Generator Worker', () => {
@@ -87,8 +89,6 @@ describe('Reviews Generator Worker', () => {
 			result: {
 				name: 'Test Product',
 				product_information: { upc: ' 123456789012 ' },
-				average_rating: 4.5,
-				total_reviews: 1,
 				reviews: [{ username: 'Tester', stars: 5, title: 'Great', review: 'Works well' }],
 			},
 		});
@@ -114,8 +114,6 @@ describe('Reviews Generator Worker', () => {
 			result: {
 				name: 'Duplicate Test Product',
 				product_information: { upc: ' 998877665544 ' },
-				average_rating: 4.5,
-				total_reviews: 1,
 				reviews: [{ username: 'Tester', title: 'Great\n5.0 out of 5 stars', review: 'Works well' }],
 			},
 		});
@@ -131,7 +129,9 @@ describe('Reviews Generator Worker', () => {
 
 		expect(response.status).toBe(200);
 		const reviewCount = await env.DB.prepare(`SELECT COUNT(*) as total FROM reviews WHERE asin = ?`).bind(asin).first<{ total: number }>();
-		const review = await env.DB.prepare(`SELECT rating, title FROM reviews WHERE asin = ?`).bind(asin).first<{ rating: number; title: string }>();
+		const review = await env.DB.prepare(`SELECT rating, title FROM reviews WHERE asin = ?`)
+			.bind(asin)
+			.first<{ rating: number; title: string }>();
 		const product = await env.DB.prepare(`SELECT upc_code FROM products WHERE asin = ?`).bind(asin).first<{ upc_code: string }>();
 
 		expect(reviewCount?.total).toBe(1);

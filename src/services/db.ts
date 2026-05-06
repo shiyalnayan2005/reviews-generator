@@ -12,17 +12,15 @@ export async function insertProduct(env: Env, data: ProductInsertData): Promise<
 	try {
 		await env.DB.prepare(
 			`
-      INSERT INTO products (asin, title, handle, upc_code, rating, total_reviews)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO products (asin, title, handle, upc_code)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT(asin) DO UPDATE SET
         title = excluded.title,
         handle = excluded.handle,
-        upc_code = excluded.upc_code,
-        rating = excluded.rating,
-        total_reviews = excluded.total_reviews
+        upc_code = excluded.upc_code
     `,
 		)
-			.bind(data.asin, data.name || null, data.handle || null, data.upc_code || null, data.average_rating || null, data.total_reviews || null)
+			.bind(data.asin, data.name || null, data.handle || null, data.upc_code || null)
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to insert product: ${error}`);
@@ -52,9 +50,42 @@ export async function getProductsForShopifyUpdate(env: Env, limit: number = 25):
 
 export async function updateProductShopifyHandle(env: Env, asin: string, handle: string): Promise<void> {
 	try {
-		await env.DB.prepare(`UPDATE products SET handle = ? WHERE asin = ?`).bind(handle || null, asin).run();
+		await env.DB.prepare(`UPDATE products SET handle = ? WHERE asin = ?`)
+			.bind(handle || null, asin)
+			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to update Shopify product handle: ${error}`);
+	}
+}
+
+export async function updateProduct(env: Env, asin: string, data: { title?: string; upc_code?: string; handle?: string }): Promise<void> {
+	try {
+		const updates = [];
+		const params = [];
+
+		if (data.title !== undefined) {
+			updates.push('title = ?');
+			params.push(data.title || null);
+		}
+		if (data.upc_code !== undefined) {
+			updates.push('upc_code = ?');
+			params.push(data.upc_code || null);
+		}
+		if (data.handle !== undefined) {
+			updates.push('handle = ?');
+			params.push(data.handle || null);
+		}
+
+		if (updates.length === 0) return;
+
+		const sql = `UPDATE products SET ${updates.join(', ')} WHERE asin = ?`;
+		params.push(asin);
+
+		await env.DB.prepare(sql)
+			.bind(...params)
+			.run();
+	} catch (error) {
+		throw new DatabaseError(`Failed to update product: ${error}`);
 	}
 }
 
@@ -172,6 +203,30 @@ export async function getProducts(env: Env, limit: number = 50, offset: number =
 		return result.results || [];
 	} catch (error) {
 		throw new DatabaseError(`Failed to get products: ${error}`);
+	}
+}
+
+export async function getProductsWithReviewCounts(
+	env: Env,
+	limit: number = 50,
+	offset: number = 0,
+): Promise<(Product & { review_count: number })[]> {
+	try {
+		const result = await env.DB.prepare(
+			`
+			SELECT p.*, COUNT(r.id) as review_count
+			FROM products p
+			LEFT JOIN reviews r ON p.asin = r.asin
+			GROUP BY p.id, p.asin, p.title, p.handle, p.upc_code, p.created_at
+			ORDER BY p.created_at DESC
+			LIMIT ? OFFSET ?
+		`,
+		)
+			.bind(limit, offset)
+			.all<Product & { review_count: number }>();
+		return result.results || [];
+	} catch (error) {
+		throw new DatabaseError(`Failed to get products with review counts: ${error}`);
 	}
 }
 

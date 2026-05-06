@@ -3,12 +3,14 @@ import {
 	deleteProduct,
 	deleteReview,
 	getProducts,
+	getProductsWithReviewCounts,
 	getProductReviews,
 	getReview,
 	searchReviews,
 	getReviewStats,
 	getProductsForShopifyUpdate,
 	updateProductShopifyHandle,
+	updateProduct,
 } from '../services/db';
 import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
@@ -27,7 +29,7 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			const limit = parseInt(url.searchParams.get('limit') || '50');
 			const offset = parseInt(url.searchParams.get('offset') || '0');
 
-			const products = await getProducts(env, limit, offset);
+			const products = await getProductsWithReviewCounts(env, limit, offset);
 			return Response.json({ success: true, products });
 		}
 
@@ -66,6 +68,16 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 				return Response.json({ success: true });
 			}
 
+			if (request.method === 'PUT') {
+				const requestBody = (await request.json().catch(() => ({}))) as { title?: string; body?: string; rating?: number };
+				const { title, body: reviewBody, rating } = requestBody;
+				// Note: For now, we'll only update title and body. Rating update might need more consideration
+				await env.DB.prepare(`UPDATE reviews SET title = ?, body = ? WHERE id = ?`)
+					.bind(title || null, reviewBody || null, parseInt(id))
+					.run();
+				return Response.json({ success: true });
+			}
+
 			const review = await getReview(env, id);
 			if (!review) {
 				return handleError(new ValidationError(`Review not found with id=${id}`));
@@ -82,6 +94,13 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 			if (request.method === 'DELETE') {
 				await deleteProduct(env, asin);
+				return Response.json({ success: true });
+			}
+
+			if (request.method === 'PUT') {
+				const body = (await request.json().catch(() => ({}))) as { title?: string; upc_code?: string; handle?: string };
+				const { title, upc_code, handle } = body;
+				await updateProduct(env, asin, { title, upc_code, handle });
 				return Response.json({ success: true });
 			}
 		}
@@ -573,14 +592,13 @@ function serveDashboardHTML(): Response {
                             <th>Title</th>
                             <th>UPC</th>
                             <th>Handle</th>
-                            <th>Rating</th>
-                            <th>Total Reviews</th>
+                            <th>Review Count</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="products-tbody">
                         <tr>
-                            <td colspan="7" style="text-align: center; padding: 40px;">
+                            <td colspan="6" style="text-align: center; padding: 40px;">
                                 <div class="loading"></div> Loading products...
                             </td>
                         </tr>
@@ -622,6 +640,60 @@ function serveDashboardHTML(): Response {
             </div>
         </div>
 
+        <div id="product-edit-modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="modal-close" onclick="closeProductEditModal()">&times;</span>
+                <h3>Edit Product</h3>
+                <form id="product-edit-form">
+                    <div style="margin-bottom: 16px;">
+                        <label for="edit-asin" style="display: block; margin-bottom: 4px; font-weight: 600;">ASIN</label>
+                        <input type="text" id="edit-asin" readonly style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb;">
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label for="edit-title" style="display: block; margin-bottom: 4px; font-weight: 600;">Title</label>
+                        <input type="text" id="edit-title" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label for="edit-upc" style="display: block; margin-bottom: 4px; font-weight: 600;">UPC</label>
+                        <input type="text" id="edit-upc" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label for="edit-handle" style="display: block; margin-bottom: 4px; font-weight: 600;">Handle</label>
+                        <input type="text" id="edit-handle" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                    </div>
+                    <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                        <button type="button" class="btn btn-secondary" onclick="closeProductEditModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="review-edit-modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="modal-close" onclick="closeReviewEditModal()">&times;</span>
+                <h3>Edit Review</h3>
+                <form id="review-edit-form">
+                    <div style="margin-bottom: 16px;">
+                        <label for="edit-review-id" style="display: block; margin-bottom: 4px; font-weight: 600;">Review ID</label>
+                        <input type="text" id="edit-review-id" readonly style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb;">
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label for="edit-review-title" style="display: block; margin-bottom: 4px; font-weight: 600;">Title</label>
+                        <input type="text" id="edit-review-title" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label for="edit-review-body" style="display: block; margin-bottom: 4px; font-weight: 600;">Body</label>
+                        <textarea id="edit-review-body" rows="6" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; resize: vertical;"></textarea>
+                    </div>
+                    <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                        <button type="button" class="btn btn-secondary" onclick="closeReviewEditModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <script>
             let currentStatus = 'all';
             let currentSearch = '';
@@ -640,6 +712,7 @@ function serveDashboardHTML(): Response {
             const icons = {
                 eye: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
                 refresh: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.8 9.8 0 0 1-6.7-2.7"></path><path d="M3 12a9 9 0 0 1 9-9 9.8 9.8 0 0 1 6.7 2.7"></path><path d="M3 3v6h6"></path><path d="M21 21v-6h-6"></path></svg>',
+                edit: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>',
                 eraser: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 21-4-4 10-10 4 4-10 10Z"></path><path d="m14 6 4-4 4 4-4 4"></path><path d="M10 21h11"></path></svg>',
                 trash: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>',
                 spinner: '<span class="loading" aria-hidden="true"></span>'
@@ -713,17 +786,17 @@ function serveDashboardHTML(): Response {
                             <td>\${escapeHtml(product.title)}</td>
                             <td>\${escapeHtml(product.upc_code)}</td>
                             <td>\${escapeHtml(product.handle)}</td>
-                            <td>\${escapeHtml(product.rating)}</td>
-                            <td>\${escapeHtml(product.total_reviews)}</td>
+                            <td>\${escapeHtml(product.review_count)}</td>
                             <td>
                                 <div class="actions">
+                                    <button class="btn btn-secondary icon-btn" onclick="editProduct('\${escapeHtml(product.asin)}')" title="Edit product" aria-label="Edit product" \${actionState ? 'disabled' : ''}>\${icons.edit}</button>
                                     <button class="btn btn-secondary icon-btn" onclick="viewProductReviews('\${escapeHtml(product.asin)}')" title="View reviews" aria-label="View reviews" \${actionState ? 'disabled' : ''}>\${icons.eye}</button>
                                     <button class="btn btn-danger icon-btn" onclick="removeProduct('\${escapeHtml(product.asin)}', event)" title="Remove product" aria-label="Remove product" \${actionState ? 'disabled' : ''}>\${renderActionIcon(actionState, 'delete', icons.trash)}</button>
                                 </div>
                             </td>
                         </tr>
                     \`;
-                }).join('') || '<tr><td colspan="7" style="text-align: center; padding: 40px;">No products found.</td></tr>';
+                }).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No products found.</td></tr>';
                 renderPagination('products-pagination', currentProductPage, hasNextProductPage, 'changeProductPage');
             }
 
@@ -740,6 +813,7 @@ function serveDashboardHTML(): Response {
                             <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
                             <td>
                                 <div class="actions">
+                                    <button class="btn btn-secondary icon-btn" onclick="editReview(\${review.id})" title="Edit review" aria-label="Edit review" \${actionState ? 'disabled' : ''}>\${icons.edit}</button>
                                     <button class="btn btn-primary icon-btn" onclick="viewReview(\${review.id})" title="View review" aria-label="View review" \${actionState ? 'disabled' : ''}>\${icons.eye}</button>
                                     <button class="btn btn-secondary icon-btn" onclick="generateReview(\${review.id})" title="Generate review" aria-label="Generate review" \${actionState ? 'disabled' : ''}>\${renderActionIcon(actionState, 'generate', icons.refresh)}</button>
                                     <button class="btn btn-secondary icon-btn" onclick="clearReviewAI(\${review.id})" title="Clear AI review" aria-label="Clear AI review" \${actionState ? 'disabled' : ''}>\${renderActionIcon(actionState, 'clear', icons.eraser)}</button>
@@ -1033,6 +1107,90 @@ function serveDashboardHTML(): Response {
             function closeModal() {
                 document.getElementById('review-modal').classList.add('hidden');
             }
+
+            function closeProductEditModal() {
+                document.getElementById('product-edit-modal').classList.add('hidden');
+            }
+
+            async function editProduct(asin) {
+                const product = currentProducts.find(p => p.asin === asin);
+                if (!product) return;
+
+                document.getElementById('edit-asin').value = product.asin;
+                document.getElementById('edit-title').value = product.title || '';
+                document.getElementById('edit-upc').value = product.upc_code || '';
+                document.getElementById('edit-handle').value = product.handle || '';
+
+                document.getElementById('product-edit-modal').classList.remove('hidden');
+            }
+
+            document.getElementById('product-edit-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const asin = document.getElementById('edit-asin').value;
+                const title = document.getElementById('edit-title').value;
+                const upc_code = document.getElementById('edit-upc').value;
+                const handle = document.getElementById('edit-handle').value;
+
+                try {
+                    await fetchJson('/api/product?asin=' + encodeURIComponent(asin), {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title, upc_code, handle })
+                    });
+
+                    // Update the product in the current list
+                    currentProducts = currentProducts.map(p =>
+                        p.asin === asin ? { ...p, title: title || null, upc_code: upc_code || null, handle: handle || null } : p
+                    );
+                    renderProducts();
+                    closeProductEditModal();
+                    showMessage('Product updated successfully!', 'success');
+                } catch (error) {
+                    console.error('Failed to update product:', error);
+                    showMessage(error.message || 'Failed to update product', 'error');
+                }
+            });
+
+            function closeReviewEditModal() {
+                document.getElementById('review-edit-modal').classList.add('hidden');
+            }
+
+            async function editReview(reviewId) {
+                const review = currentReviews.find(r => r.id === reviewId);
+                if (!review) return;
+
+                document.getElementById('edit-review-id').value = review.id;
+                document.getElementById('edit-review-title').value = review.title || '';
+                document.getElementById('edit-review-body').value = review.body || '';
+
+                document.getElementById('review-edit-modal').classList.remove('hidden');
+            }
+
+            document.getElementById('review-edit-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const id = document.getElementById('edit-review-id').value;
+                const title = document.getElementById('edit-review-title').value;
+                const body = document.getElementById('edit-review-body').value;
+
+                try {
+                    await fetchJson('/api/review?id=' + encodeURIComponent(id), {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title, body })
+                    });
+
+                    // Update the review in the current list
+                    currentReviews = currentReviews.map(r =>
+                        r.id === parseInt(id) ? { ...r, title: title || null, body: body || null } : r
+                    );
+                    renderReviews();
+                    closeReviewEditModal();
+                    showMessage('Review updated successfully!', 'success');
+                } catch (error) {
+                    console.error('Failed to update review:', error);
+                    showMessage(error.message || 'Failed to update review', 'error');
+                }
+            });
 
             function showMessage(message, type) {
                 // Simple message display - you can enhance this
