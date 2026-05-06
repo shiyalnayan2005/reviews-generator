@@ -538,7 +538,10 @@ function serveDashboardHTML(): Response {
             <div class="header">
                 <h1>Reviews Generator Dashboard</h1>
                 <p>Monitor and manage product reviews processing</p>
-                <a href="/export" class="btn btn-primary" target="_blank">Export Reviews</a>
+                <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                    <a href="/export" class="btn btn-primary" target="_blank">Export Reviews</a>
+                    <button class="btn btn-secondary" onclick="openJsonModal()">📄 Upload JSON</button>
+                </div>
             </div>
 
             <div class="stats" id="stats">
@@ -691,6 +694,37 @@ function serveDashboardHTML(): Response {
                         <button type="submit" class="btn btn-primary">Save Changes</button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <div id="json-modal" class="modal hidden">
+            <div class="modal-content" style="max-width: 700px;">
+                <span class="modal-close" onclick="closeJsonModal()">&times;</span>
+                <h3 style="margin-bottom: 20px;">Upload JSON Data</h3>
+                
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Paste JSON Data:</label>
+                    <textarea id="json-input" 
+                        style="width: 100%; height: 200px; padding: 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace; font-size: 14px; resize: vertical;"
+                        placeholder='Paste JSON array or JSONL data...&#10;&#10;Example: [{"input": "ASIN123", "result": {...}}, ...]'></textarea>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Or Upload JSON File:</label>
+                    <input type="file" id="json-file" accept=".json,.jsonl,.txt" 
+                        style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+                </div>
+                
+                <div id="json-stats" style="display: none; padding: 10px; background: #f0f9ff; border-radius: 6px; margin-bottom: 20px;">
+                    <strong>Items detected:</strong> <span id="json-item-count">0</span>
+                </div>
+                
+                <div id="json-status" style="display: none; margin-bottom: 20px;"></div>
+                
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button class="btn btn-secondary" onclick="closeJsonModal()">Cancel</button>
+                    <button class="btn btn-primary" id="json-submit-btn" onclick="submitJsonData()" disabled>Submit Data</button>
+                </div>
             </div>
         </div>
 
@@ -1228,6 +1262,152 @@ function serveDashboardHTML(): Response {
                     currentReviewPage = 0;
                     loadReviews();
                 });
+            });
+
+            // JSON Upload Functions
+            let parsedJsonData = null;
+
+            function openJsonModal() {
+                document.getElementById('json-modal').classList.remove('hidden');
+                resetJsonForm();
+            }
+
+            function closeJsonModal() {
+                document.getElementById('json-modal').classList.add('hidden');
+                resetJsonForm();
+            }
+
+            function resetJsonForm() {
+                parsedJsonData = null;
+                document.getElementById('json-input').value = '';
+                document.getElementById('json-file').value = '';
+                document.getElementById('json-submit-btn').disabled = true;
+                document.getElementById('json-stats').style.display = 'none';
+                document.getElementById('json-status').style.display = 'none';
+            }
+
+            // Parse JSON text
+            function parseJsonInput(text) {
+                const trimmed = text.trim();
+                if (!trimmed) return [];
+                
+                try {
+                    // Try parsing as JSON array first
+                    const parsed = JSON.parse(trimmed);
+                    if (Array.isArray(parsed)) return parsed;
+                    if (parsed.input && parsed.result) return [parsed];
+                    if (parsed.payloads && Array.isArray(parsed.payloads)) return parsed.payloads;
+                    return [];
+                } catch {
+                    // Try JSONL format (one JSON object per line)
+                    return trimmed.split('\\n')
+                        .filter(line => line.trim())
+                        .map(line => {
+                            try { return JSON.parse(line.trim()); } 
+                            catch { return null; }
+                        })
+                        .filter(item => item && item.input && item.result);
+                }
+            }
+
+            // Handle textarea input
+            document.getElementById('json-input').addEventListener('input', function(e) {
+                const data = parseJsonInput(e.target.value);
+                updateJsonData(data);
+            });
+
+            // Handle file upload
+            document.getElementById('json-file').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const data = parseJsonInput(event.target.result);
+                    updateJsonData(data);
+                    
+                    // Show file content in textarea for preview
+                    if (data.length > 0) {
+                        document.getElementById('json-input').value = event.target.result.substring(0, 500) + 
+                            (event.target.result.length > 500 ? '\\n... (truncated preview)' : '');
+                    }
+                };
+                reader.readAsText(file);
+            });
+
+            function updateJsonData(data) {
+                parsedJsonData = data;
+                const submitBtn = document.getElementById('json-submit-btn');
+                const statsDiv = document.getElementById('json-stats');
+                
+                if (data.length > 0) {
+                    submitBtn.disabled = false;
+                    statsDiv.style.display = 'block';
+                    document.getElementById('json-item-count').textContent = data.length;
+                } else {
+                    submitBtn.disabled = true;
+                    statsDiv.style.display = 'none';
+                }
+            }
+
+            async function submitJsonData() {
+                if (!parsedJsonData || parsedJsonData.length === 0) {
+                    showMessage('No valid data to submit', 'error');
+                    return;
+                }
+                
+                const submitBtn = document.getElementById('json-submit-btn');
+                const statusDiv = document.getElementById('json-status');
+                const originalText = submitBtn.textContent;
+                
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Submitting...';
+                statusDiv.style.display = 'block';
+                statusDiv.innerHTML = '<div style="padding: 10px; background: #dbeafe; border-radius: 4px;">Processing data...</div>';
+                
+                try {
+                    const response = await fetch('/webhook/products', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ payloads: parsedJsonData })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok && result.success) {
+                        statusDiv.innerHTML = \`<div style="padding: 10px; background: #d1fae5; border-radius: 4px; color: #065f46;">
+                            ✅ Successfully processed \${result.processed} of \${result.total} items
+                        </div>\`;
+                        
+                        // Reload data after success
+                        setTimeout(() => {
+                            closeJsonModal();
+                            refreshData();
+                        }, 2000);
+                        
+                        showMessage(\`Successfully processed \${result.processed} of \${result.total} items\`, 'success');
+                    } else {
+                        throw new Error(result.error || result.message || 'Processing failed');
+                    }
+                } catch (error) {
+                    console.error('JSON submit error:', error);
+                    statusDiv.innerHTML = \`<div style="padding: 10px; background: #fee2e2; border-radius: 4px; color: #dc2626;">
+                        ❌ Error: \${escapeHtml(error.message)}
+                    </div>\`;
+                    showMessage(error.message || 'Failed to process JSON data', 'error');
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalText;
+                }
+            }
+
+            // Close modal when clicking outside
+            document.getElementById('json-modal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    closeJsonModal();
+                }
             });
 
             // Initial load

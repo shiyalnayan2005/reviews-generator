@@ -1,4 +1,5 @@
 import { strFromU8, unzipSync } from 'fflate';
+import { ValidationError } from './errors';
 
 export function decodeHtmlEntities(text: string): string {
 	return text
@@ -34,6 +35,18 @@ export async function parseWebhookBody(request: Request): Promise<any[]> {
 		}
 
 		return results;
+	}
+	if (contentType.includes('application/json')) {
+		const body: any = await request.json();
+
+		// Accept both array and {payloads: [...]} format
+		if (Array.isArray(body)) {
+			return body;
+		} else if (body.payloads && Array.isArray(body.payloads)) {
+			return body.payloads;
+		} else {
+			throw new ValidationError('Invalid JSON format. Expected array or {payloads: [...]}');
+		}
 	}
 
 	const text = await request.text();
