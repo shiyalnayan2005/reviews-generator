@@ -210,11 +210,8 @@ export async function getProductsWithReviewCounts(
 	env: Env,
 	limit: number = 50,
 	offset: number = 0,
-): Promise<{ products: (Product & { review_count: number })[]; total: number }> {
+): Promise<(Product & { review_count: number })[]> {
 	try {
-		const countResult = await env.DB.prepare(`SELECT COUNT(*) as total FROM products`).first<{ total: number }>();
-		const total = countResult?.total || 0;
-
 		const result = await env.DB.prepare(
 			`
 			SELECT p.*, COUNT(r.id) as review_count
@@ -227,64 +224,41 @@ export async function getProductsWithReviewCounts(
 		)
 			.bind(limit, offset)
 			.all<Product & { review_count: number }>();
-
-		return { products: result.results || [], total };
+		return result.results || [];
 	} catch (error) {
 		throw new DatabaseError(`Failed to get products with review counts: ${error}`);
 	}
 }
 
-export async function getProductReviews(
-	env: Env,
-	asin: string,
-	limit: number = 100,
-	offset: number = 0,
-): Promise<{ reviews: Review[]; total: number }> {
+export async function getProductReviews(env: Env, asin: string, limit: number = 100, offset: number = 0): Promise<Review[]> {
 	try {
-		const countResult = await env.DB.prepare(`SELECT COUNT(*) as total FROM reviews WHERE asin = ?`).bind(asin).first<{ total: number }>();
-		const total = countResult?.total || 0;
-
 		const result = await env.DB.prepare(`SELECT * FROM reviews WHERE asin = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`)
 			.bind(asin, limit, offset)
 			.all<Review>();
-		return { reviews: result.results || [], total };
+		return result.results || [];
 	} catch (error) {
 		throw new DatabaseError(`Failed to get product reviews: ${error}`);
 	}
 }
 
-export async function searchReviews(
-	env: Env,
-	query: string,
-	status?: string,
-	limit: number = 50,
-	offset: number = 0,
-): Promise<{ reviews: Review[]; total: number }> {
+export async function searchReviews(env: Env, query: string, status?: string, limit: number = 50, offset: number = 0): Promise<Review[]> {
 	try {
-		const searchClause = `(asin LIKE ? OR reviewer_name LIKE ? OR title LIKE ? OR body LIKE ? OR ai_body LIKE ? OR email LIKE ?)`;
-		const params = [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`];
-
-		let countSql = `SELECT COUNT(*) as total FROM reviews WHERE ${searchClause}`;
-		let sql = `SELECT * FROM reviews WHERE ${searchClause}`;
+		let sql = `SELECT * FROM reviews WHERE (title LIKE ? OR body LIKE ? OR ai_body LIKE ?)`;
+		const params = [`%${query}%`, `%${query}%`, `%${query}%`];
 
 		if (status) {
-			countSql += ` AND ai_status = ?`;
 			sql += ` AND ai_status = ?`;
 			params.push(status);
 		}
 
 		sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-		params.push(limit.toString(), offset.toString());
-
-		const countResult = await env.DB.prepare(countSql)
-			.bind(...params.slice(0, status ? 7 : 6))
-			.first<{ total: number }>();
-		const total = countResult?.total || 0;
+		params.push(limit.toString());
+		params.push(offset.toString());
 
 		const result = await env.DB.prepare(sql)
 			.bind(...params)
 			.all<Review>();
-		return { reviews: result.results || [], total };
+		return result.results || [];
 	} catch (error) {
 		throw new DatabaseError(`Failed to search reviews: ${error}`);
 	}
