@@ -2,13 +2,14 @@ import {
 	clearReviewAI,
 	deleteProduct,
 	deleteReview,
-	getProducts,
 	getProductsWithReviewCounts,
 	getProductReviews,
 	getReview,
 	searchReviews,
 	getReviewStats,
 	getProductsForShopifyUpdate,
+	insertProduct,
+	insertReviews,
 	updateProductShopifyHandle,
 	updateProduct,
 } from '../services/db';
@@ -54,13 +55,48 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 		if (pathname === '/api/review') {
 			const id = url.searchParams.get('id');
-			if (!id) {
-				return handleError(new ValidationError('Review id parameter required'));
-			}
 
 			if (request.method === 'POST' && url.searchParams.get('action') === 'clear') {
+				if (!id) {
+					return handleError(new ValidationError('Review id parameter required'));
+				}
 				await clearReviewAI(env, id);
 				return Response.json({ success: true });
+			}
+
+			if (request.method === 'POST') {
+				const body = (await request.json().catch(() => ({}))) as {
+					asin?: string;
+					reviewer_name?: string;
+					email?: string;
+					rating?: string | number;
+					title?: string;
+					body?: string;
+				};
+				const asin = body.asin?.trim();
+				if (!asin) {
+					return handleError(new ValidationError('ASIN is required'));
+				}
+
+				const product = await env.DB.prepare(`SELECT asin FROM products WHERE asin = ?`).bind(asin).first<{ asin: string }>();
+				if (!product) {
+					return handleError(new ValidationError('Review ASIN must match an existing product'));
+				}
+
+				const inserted = await insertReviews(env, asin, [
+					{
+						username: body.reviewer_name?.trim() || 'Anonymous',
+						email: body.email?.trim() || '',
+						stars: body.rating || 1,
+						title: body.title?.trim() || '',
+						review: body.body?.trim() || '',
+					},
+				]);
+				return Response.json({ success: true, inserted });
+			}
+
+			if (!id) {
+				return handleError(new ValidationError('Review id parameter required'));
 			}
 
 			if (request.method === 'DELETE') {
@@ -71,9 +107,8 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			if (request.method === 'PUT') {
 				const requestBody = (await request.json().catch(() => ({}))) as { title?: string; body?: string; rating?: number };
 				const { title, body: reviewBody, rating } = requestBody;
-				// Note: For now, we'll only update title and body. Rating update might need more consideration
-				await env.DB.prepare(`UPDATE reviews SET title = ?, body = ? WHERE id = ?`)
-					.bind(title || null, reviewBody || null, parseInt(id))
+				await env.DB.prepare(`UPDATE reviews SET title = ?, body = ?, rating = ? WHERE id = ?`)
+					.bind(title || null, reviewBody || null, rating || 1, parseInt(id))
 					.run();
 				return Response.json({ success: true });
 			}
@@ -88,6 +123,23 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 		if (pathname === '/api/product') {
 			const asin = url.searchParams.get('asin');
+
+			if (request.method === 'POST') {
+				const body = (await request.json().catch(() => ({}))) as { asin?: string; title?: string; upc_code?: string; handle?: string };
+				const productAsin = body.asin?.trim();
+				if (!productAsin) {
+					return handleError(new ValidationError('ASIN is required'));
+				}
+
+				await insertProduct(env, {
+					asin: productAsin,
+					name: body.title?.trim() || '',
+					upc_code: body.upc_code?.trim() || '',
+					handle: body.handle?.trim() || '',
+				});
+				return Response.json({ success: true });
+			}
+
 			if (!asin) {
 				return handleError(new ValidationError('ASIN parameter required'));
 			}
@@ -295,6 +347,12 @@ function serveDashboardHTML(): Response {
             .section-header .section-title {
                 margin-bottom: 0;
             }
+            .section-actions {
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
             .table {
                 width: 100%;
                 border-collapse: collapse;
@@ -378,25 +436,35 @@ function serveDashboardHTML(): Response {
                 left: 0;
                 width: 100%;
                 height: 100%;
-                background: rgba(0,0,0,0.5);
+                background: rgba(15, 23, 42, 0.58);
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 z-index: 1000;
+                padding: 20px;
             }
             .modal-content {
                 background: white;
-                padding: 24px;
+                padding: 0;
                 border-radius: 12px;
                 max-width: 1000px;
                 width: 95%;
                 max-height: 90vh;
                 overflow-y: auto;
+                box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
             }
             .modal-close {
-                float: right;
                 cursor: pointer;
-                font-size: 24px;
+                width: 36px;
+                height: 36px;
+                border: 1px solid #e2e8f0;
+                border-radius: 50%;
+                background: white;
+                color: #475569;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 22px;
                 line-height: 1;
             }
             .modal-header {
@@ -404,8 +472,10 @@ function serveDashboardHTML(): Response {
                 flex-wrap: wrap;
                 justify-content: space-between;
                 gap: 16px;
-                align-items: center;
-                margin-bottom: 18px;
+                align-items: flex-start;
+                padding: 22px 24px;
+                border-bottom: 1px solid #e2e8f0;
+                background: #f8fafc;
             }
             .modal-title {
                 margin: 0;
@@ -416,6 +486,61 @@ function serveDashboardHTML(): Response {
                 color: #475569;
                 margin-top: 6px;
                 font-size: 0.95em;
+            }
+            .modal-body {
+                padding: 24px;
+            }
+            .modal-footer {
+                display: flex;
+                gap: 10px;
+                justify-content: flex-end;
+                padding: 18px 24px;
+                border-top: 1px solid #e2e8f0;
+                background: #f8fafc;
+            }
+            .form-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+            }
+            .form-field {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+            .form-field.full {
+                grid-column: 1 / -1;
+            }
+            .form-field label {
+                color: #334155;
+                font-size: 0.9em;
+                font-weight: 700;
+            }
+            .form-field input,
+            .form-field select,
+            .form-field textarea {
+                width: 100%;
+                padding: 11px 12px;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                color: #0f172a;
+                font: inherit;
+                background: white;
+            }
+            .form-field input:focus,
+            .form-field select:focus,
+            .form-field textarea:focus {
+                outline: none;
+                border-color: #2563eb;
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+            }
+            .form-field input[readonly] {
+                background: #f8fafc;
+                color: #64748b;
+            }
+            .form-help {
+                color: #64748b;
+                font-size: 0.84em;
             }
             .detail-grid {
                 display: grid;
@@ -531,6 +656,12 @@ function serveDashboardHTML(): Response {
             .processing { opacity: 0.6; pointer-events: none; }
             .success { background: #d1fae5; color: #065f46; }
             .error { background: #fee2e2; color: #dc2626; }
+            @media (max-width: 720px) {
+                body { padding: 10px; }
+                .form-grid { grid-template-columns: 1fr; }
+                .modal-footer { flex-direction: column-reverse; }
+                .modal-footer .btn { width: 100%; }
+            }
         </style>
     </head>
     <body>
@@ -586,7 +717,10 @@ function serveDashboardHTML(): Response {
             <div class="products-section" id="products-section">
                 <div class="section-header">
                     <h2 class="section-title">Products</h2>
-                    <button class="btn btn-primary" id="shopify-update-btn" onclick="updateShopifyProductInfo()">Update Shopify Handles</button>
+                    <div class="section-actions">
+                        <button class="btn btn-primary" onclick="openProductAddModal()">Add Product</button>
+                        <button class="btn btn-secondary" id="shopify-update-btn" onclick="updateShopifyProductInfo()">Update Shopify Handles</button>
+                    </div>
                 </div>
                 <table class="table" id="products-table">
                     <thead>
@@ -611,7 +745,12 @@ function serveDashboardHTML(): Response {
             </div>
 
             <div class="reviews-section hidden" id="reviews-section">
-                <h2 class="section-title">Reviews</h2>
+                <div class="section-header">
+                    <h2 class="section-title">Reviews</h2>
+                    <div class="section-actions">
+                        <button class="btn btn-primary" onclick="openReviewAddModal()">Add Review</button>
+                    </div>
+                </div>
                 <table class="table" id="reviews-table">
                     <thead>
                         <tr>
@@ -637,34 +776,87 @@ function serveDashboardHTML(): Response {
 
         <div id="review-modal" class="modal hidden">
             <div class="modal-content">
-                <span class="modal-close" onclick="closeModal()">&times;</span>
-                <h3>Review Details</h3>
-                <div id="review-content"></div>
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title">Review Details</h3>
+                        <div class="modal-note">Original content and generated AI output.</div>
+                    </div>
+                    <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close">&times;</button>
+                </div>
+                <div class="modal-body" id="review-content"></div>
+            </div>
+        </div>
+
+        <div id="product-add-modal" class="modal hidden">
+            <div class="modal-content" style="max-width: 720px;">
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title">Add Product</h3>
+                        <div class="modal-note">Create a product before adding reviews to it.</div>
+                    </div>
+                    <button type="button" class="modal-close" onclick="closeProductAddModal()" aria-label="Close">&times;</button>
+                </div>
+                <form id="product-add-form">
+                    <div class="modal-body">
+                        <div class="form-grid">
+                            <div class="form-field">
+                                <label for="add-product-asin">ASIN</label>
+                                <input type="text" id="add-product-asin" required placeholder="B0XXXXXXXX">
+                            </div>
+                            <div class="form-field">
+                                <label for="add-product-upc">UPC</label>
+                                <input type="text" id="add-product-upc" placeholder="Optional">
+                            </div>
+                            <div class="form-field full">
+                                <label for="add-product-title">Title</label>
+                                <input type="text" id="add-product-title" required placeholder="Product title">
+                            </div>
+                            <div class="form-field full">
+                                <label for="add-product-handle">Shopify Handle</label>
+                                <input type="text" id="add-product-handle" placeholder="Optional">
+                                <div class="form-help">You can fill this now or use Update Shopify Handles later.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeProductAddModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Add Product</button>
+                    </div>
+                </form>
             </div>
         </div>
 
         <div id="product-edit-modal" class="modal hidden">
-            <div class="modal-content">
-                <span class="modal-close" onclick="closeProductEditModal()">&times;</span>
-                <h3>Edit Product</h3>
+            <div class="modal-content" style="max-width: 720px;">
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title">Edit Product</h3>
+                        <div class="modal-note">Update product details used for review exports and matching.</div>
+                    </div>
+                    <button type="button" class="modal-close" onclick="closeProductEditModal()" aria-label="Close">&times;</button>
+                </div>
                 <form id="product-edit-form">
-                    <div style="margin-bottom: 16px;">
-                        <label for="edit-asin" style="display: block; margin-bottom: 4px; font-weight: 600;">ASIN</label>
-                        <input type="text" id="edit-asin" readonly style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb;">
+                    <div class="modal-body">
+                        <div class="form-grid">
+                            <div class="form-field">
+                                <label for="edit-asin">ASIN</label>
+                                <input type="text" id="edit-asin" readonly>
+                            </div>
+                            <div class="form-field">
+                                <label for="edit-upc">UPC</label>
+                                <input type="text" id="edit-upc">
+                            </div>
+                            <div class="form-field full">
+                                <label for="edit-title">Title</label>
+                                <input type="text" id="edit-title">
+                            </div>
+                            <div class="form-field full">
+                                <label for="edit-handle">Shopify Handle</label>
+                                <input type="text" id="edit-handle">
+                            </div>
+                        </div>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label for="edit-title" style="display: block; margin-bottom: 4px; font-weight: 600;">Title</label>
-                        <input type="text" id="edit-title" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
-                    </div>
-                    <div style="margin-bottom: 16px;">
-                        <label for="edit-upc" style="display: block; margin-bottom: 4px; font-weight: 600;">UPC</label>
-                        <input type="text" id="edit-upc" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
-                    </div>
-                    <div style="margin-bottom: 16px;">
-                        <label for="edit-handle" style="display: block; margin-bottom: 4px; font-weight: 600;">Handle</label>
-                        <input type="text" id="edit-handle" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
-                    </div>
-                    <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeProductEditModal()">Cancel</button>
                         <button type="submit" class="btn btn-primary">Save Changes</button>
                     </div>
@@ -672,24 +864,95 @@ function serveDashboardHTML(): Response {
             </div>
         </div>
 
+        <div id="review-add-modal" class="modal hidden">
+            <div class="modal-content" style="max-width: 760px;">
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title">Add Review</h3>
+                        <div class="modal-note">Reviews can only be created for products already in the products table.</div>
+                    </div>
+                    <button type="button" class="modal-close" onclick="closeReviewAddModal()" aria-label="Close">&times;</button>
+                </div>
+                <form id="review-add-form">
+                    <div class="modal-body">
+                        <div class="form-grid">
+                            <div class="form-field">
+                                <label for="add-review-asin">Product ASIN</label>
+                                <select id="add-review-asin" required></select>
+                            </div>
+                            <div class="form-field">
+                                <label for="add-review-rating">Rating</label>
+                                <select id="add-review-rating" required>
+                                    <option value="5">5</option>
+                                    <option value="4">4</option>
+                                    <option value="3">3</option>
+                                    <option value="2">2</option>
+                                    <option value="1">1</option>
+                                </select>
+                            </div>
+                            <div class="form-field">
+                                <label for="add-reviewer-name">Reviewer Name</label>
+                                <input type="text" id="add-reviewer-name" placeholder="Anonymous">
+                            </div>
+                            <div class="form-field">
+                                <label for="add-review-email">Email</label>
+                                <input type="email" id="add-review-email" placeholder="Optional">
+                            </div>
+                            <div class="form-field full">
+                                <label for="add-review-title">Title</label>
+                                <input type="text" id="add-review-title" required>
+                            </div>
+                            <div class="form-field full">
+                                <label for="add-review-body">Body</label>
+                                <textarea id="add-review-body" rows="6" required></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeReviewAddModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Add Review</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <div id="review-edit-modal" class="modal hidden">
-            <div class="modal-content">
-                <span class="modal-close" onclick="closeReviewEditModal()">&times;</span>
-                <h3>Edit Review</h3>
+            <div class="modal-content" style="max-width: 760px;">
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title">Edit Review</h3>
+                        <div class="modal-note">Adjust the original review content and rating.</div>
+                    </div>
+                    <button type="button" class="modal-close" onclick="closeReviewEditModal()" aria-label="Close">&times;</button>
+                </div>
                 <form id="review-edit-form">
-                    <div style="margin-bottom: 16px;">
-                        <label for="edit-review-id" style="display: block; margin-bottom: 4px; font-weight: 600;">Review ID</label>
-                        <input type="text" id="edit-review-id" readonly style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb;">
+                    <div class="modal-body">
+                        <div class="form-grid">
+                            <div class="form-field">
+                                <label for="edit-review-id">Review ID</label>
+                                <input type="text" id="edit-review-id" readonly>
+                            </div>
+                            <div class="form-field">
+                                <label for="edit-review-rating">Rating</label>
+                                <select id="edit-review-rating">
+                                    <option value="5">5</option>
+                                    <option value="4">4</option>
+                                    <option value="3">3</option>
+                                    <option value="2">2</option>
+                                    <option value="1">1</option>
+                                </select>
+                            </div>
+                            <div class="form-field full">
+                                <label for="edit-review-title">Title</label>
+                                <input type="text" id="edit-review-title">
+                            </div>
+                            <div class="form-field full">
+                                <label for="edit-review-body">Body</label>
+                                <textarea id="edit-review-body" rows="6"></textarea>
+                            </div>
+                        </div>
                     </div>
-                    <div style="margin-bottom: 16px;">
-                        <label for="edit-review-title" style="display: block; margin-bottom: 4px; font-weight: 600;">Title</label>
-                        <input type="text" id="edit-review-title" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
-                    </div>
-                    <div style="margin-bottom: 16px;">
-                        <label for="edit-review-body" style="display: block; margin-bottom: 4px; font-weight: 600;">Body</label>
-                        <textarea id="edit-review-body" rows="6" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; resize: vertical;"></textarea>
-                    </div>
-                    <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeReviewEditModal()">Cancel</button>
                         <button type="submit" class="btn btn-primary">Save Changes</button>
                     </div>
@@ -699,29 +962,30 @@ function serveDashboardHTML(): Response {
 
         <div id="json-modal" class="modal hidden">
             <div class="modal-content" style="max-width: 700px;">
-                <span class="modal-close" onclick="closeJsonModal()">&times;</span>
-                <h3 style="margin-bottom: 20px;">Upload JSON Data</h3>
-                
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Paste JSON Data:</label>
-                    <textarea id="json-input" 
-                        style="width: 100%; height: 200px; padding: 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace; font-size: 14px; resize: vertical;"
-                        placeholder='Paste JSON array or JSONL data...&#10;&#10;Example: [{"input": "ASIN123", "result": {...}}, ...]'></textarea>
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title">Upload JSON Data</h3>
+                        <div class="modal-note">Import product payloads from JSON, JSONL, or a text file.</div>
+                    </div>
+                    <button type="button" class="modal-close" onclick="closeJsonModal()" aria-label="Close">&times;</button>
                 </div>
-                
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Or Upload JSON File:</label>
-                    <input type="file" id="json-file" accept=".json,.jsonl,.txt" 
-                        style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+                <div class="modal-body">
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label for="json-input">Paste JSON Data</label>
+                            <textarea id="json-input" rows="9" style="font-family: monospace; font-size: 14px;" placeholder='Paste JSON array or JSONL data...&#10;&#10;Example: [{"input": "ASIN123", "result": {...}}, ...]'></textarea>
+                        </div>
+                        <div class="form-field full">
+                            <label for="json-file">Or Upload JSON File</label>
+                            <input type="file" id="json-file" accept=".json,.jsonl,.txt">
+                        </div>
+                    </div>
+                    <div id="json-stats" style="display: none; padding: 10px; background: #f0f9ff; border-radius: 6px; margin-top: 18px;">
+                        <strong>Items detected:</strong> <span id="json-item-count">0</span>
+                    </div>
+                    <div id="json-status" style="display: none; margin-top: 18px;"></div>
                 </div>
-                
-                <div id="json-stats" style="display: none; padding: 10px; background: #f0f9ff; border-radius: 6px; margin-bottom: 20px;">
-                    <strong>Items detected:</strong> <span id="json-item-count">0</span>
-                </div>
-                
-                <div id="json-status" style="display: none; margin-bottom: 20px;"></div>
-                
-                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="closeJsonModal()">Cancel</button>
                     <button class="btn btn-primary" id="json-submit-btn" onclick="submitJsonData()" disabled>Submit Data</button>
                 </div>
@@ -735,6 +999,7 @@ function serveDashboardHTML(): Response {
             let activeTab = 'products';
             let currentProducts = [];
             let currentReviews = [];
+            let productOptions = [];
             let productActions = {};
             let reviewActions = {};
             let currentProductPage = 0;
@@ -776,6 +1041,17 @@ function serveDashboardHTML(): Response {
 
             function renderActionIcon(actionState, actionName, icon) {
                 return actionState === actionName ? icons.spinner : icon;
+            }
+
+            async function loadProductOptions() {
+                const data = await fetchJson('/api/products?limit=500&offset=0');
+                productOptions = data.products || [];
+                const select = document.getElementById('add-review-asin');
+                select.innerHTML = productOptions.length
+                    ? productOptions.map((product) => \`<option value="\${escapeHtml(product.asin)}">\${escapeHtml(product.asin)} - \${escapeHtml(product.title || 'Untitled product')}</option>\`).join('')
+                    : '<option value="">No products available</option>';
+                select.disabled = !productOptions.length;
+                return productOptions;
             }
 
             function renderPagination(containerId, currentPage, hasNextPage, changeFunctionName) {
@@ -1146,6 +1422,49 @@ function serveDashboardHTML(): Response {
                 document.getElementById('product-edit-modal').classList.add('hidden');
             }
 
+            function openProductAddModal() {
+                document.getElementById('product-add-form').reset();
+                document.getElementById('product-add-modal').classList.remove('hidden');
+                document.getElementById('add-product-asin').focus();
+            }
+
+            function closeProductAddModal() {
+                document.getElementById('product-add-modal').classList.add('hidden');
+            }
+
+            document.getElementById('product-add-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const submitBtn = e.submitter;
+                const originalText = submitBtn.textContent;
+                submitBtn.textContent = 'Adding...';
+                submitBtn.disabled = true;
+
+                const asin = document.getElementById('add-product-asin').value.trim();
+                const title = document.getElementById('add-product-title').value.trim();
+                const upc_code = document.getElementById('add-product-upc').value.trim();
+                const handle = document.getElementById('add-product-handle').value.trim();
+
+                try {
+                    await fetchJson('/api/product', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ asin, title, upc_code, handle })
+                    });
+
+                    closeProductAddModal();
+                    currentProductPage = 0;
+                    await loadProducts();
+                    productOptions = [];
+                    showMessage('Product added successfully!', 'success');
+                } catch (error) {
+                    console.error('Failed to add product:', error);
+                    showMessage(error.message || 'Failed to add product', 'error');
+                } finally {
+                    submitBtn.textContent = originalText;
+                    submitBtn.disabled = false;
+                }
+            });
+
             async function editProduct(asin) {
                 const product = currentProducts.find(p => p.asin === asin);
                 if (!product) return;
@@ -1189,6 +1508,61 @@ function serveDashboardHTML(): Response {
                 document.getElementById('review-edit-modal').classList.add('hidden');
             }
 
+            async function openReviewAddModal() {
+                document.getElementById('review-add-form').reset();
+                document.getElementById('add-review-rating').value = '5';
+                try {
+                    await loadProductOptions();
+                    document.getElementById('review-add-modal').classList.remove('hidden');
+                    if (!productOptions.length) {
+                        showMessage('Add a product before adding reviews.', 'error');
+                    }
+                } catch (error) {
+                    console.error('Failed to load product options:', error);
+                    showMessage(error.message || 'Failed to load products for review form', 'error');
+                }
+            }
+
+            function closeReviewAddModal() {
+                document.getElementById('review-add-modal').classList.add('hidden');
+            }
+
+            document.getElementById('review-add-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const submitBtn = e.submitter;
+                const originalText = submitBtn.textContent;
+                submitBtn.textContent = 'Adding...';
+                submitBtn.disabled = true;
+
+                const payload = {
+                    asin: document.getElementById('add-review-asin').value,
+                    rating: Number(document.getElementById('add-review-rating').value),
+                    reviewer_name: document.getElementById('add-reviewer-name').value.trim(),
+                    email: document.getElementById('add-review-email').value.trim(),
+                    title: document.getElementById('add-review-title').value.trim(),
+                    body: document.getElementById('add-review-body').value.trim()
+                };
+
+                try {
+                    const data = await fetchJson('/api/review', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    closeReviewAddModal();
+                    currentReviewPage = 0;
+                    await Promise.all([loadStats(), loadProducts(), activeTab === 'reviews' ? loadReviews() : Promise.resolve()]);
+                    showMessage(data.inserted ? 'Review added successfully!' : 'Review already exists for this product title.', data.inserted ? 'success' : 'error');
+                } catch (error) {
+                    console.error('Failed to add review:', error);
+                    showMessage(error.message || 'Failed to add review', 'error');
+                } finally {
+                    submitBtn.textContent = originalText;
+                    submitBtn.disabled = false;
+                }
+            });
+
             async function editReview(reviewId) {
                 const review = currentReviews.find(r => r.id === reviewId);
                 if (!review) return;
@@ -1196,6 +1570,7 @@ function serveDashboardHTML(): Response {
                 document.getElementById('edit-review-id').value = review.id;
                 document.getElementById('edit-review-title').value = review.title || '';
                 document.getElementById('edit-review-body').value = review.body || '';
+                document.getElementById('edit-review-rating').value = String(review.rating || 5);
 
                 document.getElementById('review-edit-modal').classList.remove('hidden');
             }
@@ -1205,17 +1580,18 @@ function serveDashboardHTML(): Response {
                 const id = document.getElementById('edit-review-id').value;
                 const title = document.getElementById('edit-review-title').value;
                 const body = document.getElementById('edit-review-body').value;
+                const rating = Number(document.getElementById('edit-review-rating').value);
 
                 try {
                     await fetchJson('/api/review?id=' + encodeURIComponent(id), {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ title, body })
+                        body: JSON.stringify({ title, body, rating })
                     });
 
                     // Update the review in the current list
                     currentReviews = currentReviews.map(r =>
-                        r.id === parseInt(id) ? { ...r, title: title || null, body: body || null } : r
+                        r.id === parseInt(id) ? { ...r, title: title || null, body: body || null, rating } : r
                     );
                     renderReviews();
                     closeReviewEditModal();
