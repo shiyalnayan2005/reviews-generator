@@ -1539,23 +1539,56 @@ function serveDashboardHTML(): Response {
             async function processBatch() {
                 const btn = document.getElementById('process-batch-btn');
                 const originalText = btn.textContent;
+                const batchSize = 5;
+                const maxBatches = 100;
+                let totalProcessed = 0;
+                let totalDone = 0;
+                let totalFailed = 0;
+                let batches = 0;
+
+                btn.disabled = true;
                 btn.textContent = 'Processing...';
                 btn.classList.add('processing');
 
                 try {
-                    const data = await fetchJson('/review/generate/bulk?limit=5', { method: 'POST' });
+                    while (batches < maxBatches) {
+                        batches++;
+                        btn.textContent = \`Processing batch \${batches}...\`;
 
-                    if (data.success) {
-                        await refreshData();
-                        showMessage(\`Processed \${data.processed} reviews successfully!\`, 'success');
-                    } else {
-                        showMessage('Failed to process batch', 'error');
+                        const data = await fetchJson(\`/review/generate/bulk?limit=\${batchSize}\`, { method: 'POST' });
+                        const results = data.results || [];
+                        const processed = Number(data.processed || results.length || 0);
+
+                        if (!processed) {
+                            break;
+                        }
+
+                        totalProcessed += processed;
+                        totalDone += results.filter((item) => item.status === 'done').length;
+                        totalFailed += results.filter((item) => item.status === 'failed').length;
+
+                        await Promise.all([loadStats(), activeTab === 'reviews' ? loadReviews() : Promise.resolve()]);
                     }
+
+                    await Promise.all([loadStats(), activeTab === 'reviews' ? loadReviews() : loadProducts()]);
+
+                    if (batches >= maxBatches) {
+                        showMessage(\`Stopped after \${maxBatches} batches. Processed \${totalProcessed}; refresh and run again if pending reviews remain.\`, 'error');
+                        return;
+                    }
+
+                    showMessage(
+                        totalProcessed
+                            ? \`Finished processing \${totalProcessed} reviews. Done: \${totalDone}, Failed: \${totalFailed}.\`
+                            : 'No pending reviews to process.',
+                        totalFailed ? 'error' : 'success'
+                    );
                 } catch (error) {
                     console.error('Failed to process batch:', error);
-                    showMessage('Failed to process batch', 'error');
+                    showMessage(error.message || \`Stopped after processing \${totalProcessed} reviews\`, 'error');
                 } finally {
                     btn.textContent = originalText;
+                    btn.disabled = false;
                     btn.classList.remove('processing');
                 }
             }

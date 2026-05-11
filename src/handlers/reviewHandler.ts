@@ -82,7 +82,7 @@ export async function handleReviewBulkGenerate(request: Request, env: Env): Prom
 
 		const results = await processPendingReviews(env, limit);
 		if (!results.length) {
-			return Response.json({ success: true, message: 'No reviews to process' });
+			return Response.json({ success: true, processed: 0, results: [], message: 'No reviews to process' });
 		}
 
 		return Response.json({
