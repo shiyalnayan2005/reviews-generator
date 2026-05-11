@@ -34,6 +34,13 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			return Response.json({ success: true, products });
 		}
 
+		if (pathname === '/api/products/bulk' && request.method === 'POST') {
+			const body = (await request.json().catch(() => ({}))) as { products?: unknown[] } | unknown[];
+			const items = Array.isArray(body) ? body : Array.isArray(body.products) ? body.products : [];
+			const result = await bulkInsertProducts(env, items);
+			return Response.json({ success: true, ...result });
+		}
+
 		if (pathname === '/api/products/shopify-info' && request.method === 'POST') {
 			const limit = parseInt(url.searchParams.get('limit') || '25');
 			const result = await updateShopifyProductInformation(env, limit);
@@ -51,6 +58,13 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 			const reviews = await getProductReviews(env, asin, limit, offset);
 			return Response.json({ success: true, reviews });
+		}
+
+		if (pathname === '/api/reviews/bulk' && request.method === 'POST') {
+			const body = (await request.json().catch(() => ({}))) as { reviews?: unknown[] } | unknown[];
+			const items = Array.isArray(body) ? body : Array.isArray(body.reviews) ? body.reviews : [];
+			const result = await bulkInsertReviews(env, items);
+			return Response.json({ success: true, ...result });
 		}
 
 		if (pathname === '/api/review') {
@@ -221,6 +235,140 @@ async function updateShopifyProductInformation(
 		skipped,
 		total: products.length,
 	};
+}
+
+interface BulkItemResult {
+	index: number;
+	asin?: string;
+	success: boolean;
+	inserted?: number;
+	message: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringValue(value: unknown): string {
+	return typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
+}
+
+function ratingValue(value: unknown): number {
+	const rating = parseFloat(String(value ?? ''));
+	return Number.isFinite(rating) && rating >= 1 && rating <= 5 ? rating : 0;
+}
+
+async function bulkInsertProducts(
+	env: Env,
+	items: unknown[],
+): Promise<{ total: number; processed: number; failed: number; results: BulkItemResult[] }> {
+	const results: BulkItemResult[] = [];
+	let processed = 0;
+	let failed = 0;
+
+	for (let index = 0; index < items.length; index++) {
+		const item = asRecord(items[index]);
+		const asin = stringValue(item?.asin);
+		const title = stringValue(item?.title ?? item?.name);
+		const upcCode = stringValue(item?.upc_code ?? item?.upc ?? item?.UPC);
+		const handle = stringValue(item?.handle ?? item?.shopify_handle);
+
+		if (!item) {
+			failed++;
+			results.push({ index, success: false, message: 'Item must be an object.' });
+			continue;
+		}
+		if (!asin) {
+			failed++;
+			results.push({ index, success: false, message: 'ASIN is required.' });
+			continue;
+		}
+		if (!title) {
+			failed++;
+			results.push({ index, asin, success: false, message: 'Title is required.' });
+			continue;
+		}
+
+		try {
+			await insertProduct(env, { asin, name: title, upc_code: upcCode, handle });
+			processed++;
+			results.push({ index, asin, success: true, message: 'Product saved.' });
+		} catch (error) {
+			failed++;
+			results.push({ index, asin, success: false, message: error instanceof Error ? error.message : 'Failed to save product.' });
+		}
+	}
+
+	return { total: items.length, processed, failed, results };
+}
+
+async function bulkInsertReviews(
+	env: Env,
+	items: unknown[],
+): Promise<{ total: number; processed: number; failed: number; skipped: number; results: BulkItemResult[] }> {
+	const results: BulkItemResult[] = [];
+	let processed = 0;
+	let failed = 0;
+	let skipped = 0;
+
+	for (let index = 0; index < items.length; index++) {
+		const item = asRecord(items[index]);
+		const asin = stringValue(item?.asin);
+		const title = stringValue(item?.title);
+		const body = stringValue(item?.body ?? item?.content ?? item?.review);
+		const reviewerName = stringValue(item?.reviewer_name ?? item?.username ?? item?.name) || 'Anonymous';
+		const email = stringValue(item?.email);
+		const rating = ratingValue(item?.rating ?? item?.review_count ?? item?.stars);
+
+		if (!item) {
+			failed++;
+			results.push({ index, success: false, message: 'Item must be an object.' });
+			continue;
+		}
+		if (!asin) {
+			failed++;
+			results.push({ index, success: false, message: 'ASIN is required.' });
+			continue;
+		}
+		if (!title) {
+			failed++;
+			results.push({ index, asin, success: false, message: 'Title is required.' });
+			continue;
+		}
+		if (!body) {
+			failed++;
+			results.push({ index, asin, success: false, message: 'Review content is required.' });
+			continue;
+		}
+		if (!rating) {
+			failed++;
+			results.push({ index, asin, success: false, message: 'Rating must be a number from 1 to 5. Use rating, review_count, or stars.' });
+			continue;
+		}
+
+		try {
+			const product = await env.DB.prepare(`SELECT asin FROM products WHERE asin = ?`).bind(asin).first<{ asin: string }>();
+			if (!product) {
+				failed++;
+				results.push({ index, asin, success: false, message: 'Product ASIN does not exist.' });
+				continue;
+			}
+
+			const inserted = await insertReviews(env, asin, [{ username: reviewerName, email, stars: rating, title, review: body }]);
+			if (inserted) {
+				processed++;
+				results.push({ index, asin, success: true, inserted, message: 'Review inserted.' });
+			} else {
+				skipped++;
+				results.push({ index, asin, success: true, inserted: 0, message: 'Skipped duplicate review title for this ASIN.' });
+			}
+		} catch (error) {
+			failed++;
+			results.push({ index, asin, success: false, message: error instanceof Error ? error.message : 'Failed to save review.' });
+		}
+	}
+
+	return { total: items.length, processed, failed, skipped, results };
 }
 
 function serveDashboardHTML(): Response {
@@ -542,6 +690,26 @@ function serveDashboardHTML(): Response {
                 color: #64748b;
                 font-size: 0.84em;
             }
+            .bulk-textarea {
+                min-height: 55vh;
+                resize: vertical;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .bulk-summary {
+                margin-top: 18px;
+                padding: 12px;
+                border-radius: 8px;
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                color: #334155;
+                white-space: pre-wrap;
+                max-height: 220px;
+                overflow: auto;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 13px;
+            }
             .detail-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -719,6 +887,7 @@ function serveDashboardHTML(): Response {
                     <h2 class="section-title">Products</h2>
                     <div class="section-actions">
                         <button class="btn btn-primary" onclick="openProductAddModal()">Add Product</button>
+                        <button class="btn btn-secondary" onclick="openBulkJsonModal('products')">Bulk Add Products</button>
                         <button class="btn btn-secondary" id="shopify-update-btn" onclick="updateShopifyProductInfo()">Update Shopify Handles</button>
                     </div>
                 </div>
@@ -749,6 +918,7 @@ function serveDashboardHTML(): Response {
                     <h2 class="section-title">Reviews</h2>
                     <div class="section-actions">
                         <button class="btn btn-primary" onclick="openReviewAddModal()">Add Review</button>
+                        <button class="btn btn-secondary" onclick="openBulkJsonModal('reviews')">Bulk Add Reviews</button>
                     </div>
                 </div>
                 <table class="table" id="reviews-table">
@@ -955,6 +1125,33 @@ function serveDashboardHTML(): Response {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeReviewEditModal()">Cancel</button>
                         <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="bulk-json-modal" class="modal hidden">
+            <div class="modal-content" style="max-width: 1100px; width: 98%;">
+                <div class="modal-header">
+                    <div>
+                        <h3 class="modal-title" id="bulk-json-title">Bulk Add</h3>
+                        <div class="modal-note" id="bulk-json-note"></div>
+                    </div>
+                    <button type="button" class="modal-close" onclick="closeBulkJsonModal()" aria-label="Close">&times;</button>
+                </div>
+                <form id="bulk-json-form">
+                    <input type="hidden" id="bulk-json-type">
+                    <div class="modal-body">
+                        <div class="form-field full">
+                            <label for="bulk-json-input">JSON Array</label>
+                            <textarea id="bulk-json-input" class="bulk-textarea" required spellcheck="false"></textarea>
+                            <div class="form-help" id="bulk-json-help"></div>
+                        </div>
+                        <div id="bulk-json-status" class="bulk-summary" style="display: none;"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeBulkJsonModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="bulk-json-submit-btn">Import</button>
                     </div>
                 </form>
             </div>
@@ -1599,6 +1796,116 @@ function serveDashboardHTML(): Response {
                 } catch (error) {
                     console.error('Failed to update review:', error);
                     showMessage(error.message || 'Failed to update review', 'error');
+                }
+            });
+
+            const bulkExamples = {
+                products: [
+                    {
+                        asin: 'B09BR9D33J',
+                        title: 'Kitchen Trash Can',
+                        upc_code: '123456789012',
+                        handle: 'kitchen-trash-can'
+                    }
+                ],
+                reviews: [
+                    {
+                        asin: 'B09BR9D33J',
+                        reviewer_name: 'Amazon Customer',
+                        review_count: 4,
+                        title: 'Looks good',
+                        content: 'The bags that came with the garbage bin were too small.'
+                    },
+                    {
+                        asin: 'B09BR9D33J',
+                        reviewer_name: 'Tessa',
+                        review_count: 5,
+                        title: 'Get it!',
+                        content: 'Excellent garbage can! It takes up very little space.'
+                    }
+                ]
+            };
+
+            function parseBulkJson(text, type) {
+                const trimmed = text.trim();
+                if (!trimmed) throw new Error('Paste a JSON array before importing.');
+
+                const parsed = JSON.parse(trimmed);
+                if (Array.isArray(parsed)) return parsed;
+                if (type === 'products' && Array.isArray(parsed.products)) return parsed.products;
+                if (type === 'reviews' && Array.isArray(parsed.reviews)) return parsed.reviews;
+                throw new Error(type === 'products' ? 'Expected a products array.' : 'Expected a reviews array.');
+            }
+
+            function openBulkJsonModal(type) {
+                const isProducts = type === 'products';
+                document.getElementById('bulk-json-type').value = type;
+                document.getElementById('bulk-json-title').textContent = isProducts ? 'Bulk Add Products' : 'Bulk Add Reviews';
+                document.getElementById('bulk-json-note').textContent = isProducts
+                    ? 'Import products from an array. Existing ASINs are updated.'
+                    : 'Import reviews from an array. Bad rows are reported and the rest continue.';
+                document.getElementById('bulk-json-help').textContent = isProducts
+                    ? 'Required: asin, title. Optional: upc_code, handle.'
+                    : 'Required: asin, title, content, review_count. ASIN must already exist in products.';
+                document.getElementById('bulk-json-input').value = JSON.stringify(bulkExamples[type], null, 2);
+                document.getElementById('bulk-json-status').style.display = 'none';
+                document.getElementById('bulk-json-status').textContent = '';
+                document.getElementById('bulk-json-modal').classList.remove('hidden');
+                document.getElementById('bulk-json-input').focus();
+            }
+
+            function closeBulkJsonModal() {
+                document.getElementById('bulk-json-modal').classList.add('hidden');
+            }
+
+            function renderBulkResult(result) {
+                const lines = [
+                    \`Total: \${result.total || 0}\`,
+                    \`Processed: \${result.processed || 0}\`,
+                    \`Skipped: \${result.skipped || 0}\`,
+                    \`Failed: \${result.failed || 0}\`
+                ];
+                const problemRows = (result.results || []).filter((item) => !item.success || item.inserted === 0).slice(0, 20);
+                if (problemRows.length) {
+                    lines.push('', 'Details:');
+                    problemRows.forEach((item) => {
+                        lines.push(\`#\${Number(item.index) + 1}\${item.asin ? ' [' + item.asin + ']' : ''}: \${item.message}\`);
+                    });
+                }
+                return lines.join('\\n');
+            }
+
+            document.getElementById('bulk-json-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const type = document.getElementById('bulk-json-type').value;
+                const submitBtn = document.getElementById('bulk-json-submit-btn');
+                const statusDiv = document.getElementById('bulk-json-status');
+                const originalText = submitBtn.textContent;
+
+                try {
+                    const items = parseBulkJson(document.getElementById('bulk-json-input').value, type);
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = 'Importing...';
+                    statusDiv.style.display = 'block';
+                    statusDiv.textContent = \`Importing \${items.length} \${type}...\`;
+
+                    const result = await fetchJson(type === 'products' ? '/api/products/bulk' : '/api/reviews/bulk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(type === 'products' ? { products: items } : { reviews: items })
+                    });
+
+                    statusDiv.textContent = renderBulkResult(result);
+                    await Promise.all([loadStats(), loadProducts(), activeTab === 'reviews' ? loadReviews() : Promise.resolve()]);
+                    productOptions = [];
+                    showMessage(\`Bulk import finished: \${result.processed || 0} processed, \${result.failed || 0} failed.\`, result.failed ? 'error' : 'success');
+                } catch (error) {
+                    statusDiv.style.display = 'block';
+                    statusDiv.textContent = error.message || 'Failed to import JSON data.';
+                    showMessage(error.message || 'Failed to import JSON data', 'error');
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalText;
                 }
             });
 

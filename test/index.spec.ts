@@ -139,4 +139,59 @@ describe('Reviews Generator Worker', () => {
 		expect(review?.title).toBe('Great');
 		expect(product?.upc_code).toBe('998877665544');
 	});
+
+	it('bulk imports products and reports invalid rows without stopping', async () => {
+		const asin = `BULK-P-${Date.now()}`;
+		const request = new IncomingRequest('http://example.com/api/products/bulk', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				products: [
+					{ asin, title: 'Bulk Product', upc_code: '111222333444', handle: 'bulk-product' },
+					{ asin: '', title: 'Missing ASIN' },
+					{ asin: `${asin}-NO-TITLE` },
+				],
+			}),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<any>();
+		expect(data).toMatchObject({ success: true, total: 3, processed: 1, failed: 2 });
+
+		const product = await env.DB.prepare(`SELECT title, upc_code, handle FROM products WHERE asin = ?`)
+			.bind(asin)
+			.first<{ title: string; upc_code: string; handle: string }>();
+		expect(product).toMatchObject({ title: 'Bulk Product', upc_code: '111222333444', handle: 'bulk-product' });
+	});
+
+	it('bulk imports reviews and reports duplicates and invalid rows without stopping', async () => {
+		const asin = `BULK-R-${Date.now()}`;
+		await env.DB.prepare(`INSERT INTO products (asin, title) VALUES (?, ?)`).bind(asin, 'Review Product').run();
+
+		const request = new IncomingRequest('http://example.com/api/reviews/bulk', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify([
+				{ asin, reviewer_name: 'Amazon Customer', review_count: 4, title: 'Looks good', content: 'Nice product.' },
+				{ asin, reviewer_name: 'Amazon Customer', review_count: 4, title: 'Looks good', content: 'Duplicate title.' },
+				{ asin: 'MISSING-ASIN', reviewer_name: 'Tessa', review_count: 5, title: 'Get it!', content: 'Great.' },
+				{ asin, reviewer_name: 'No Rating', title: 'No rating', content: 'Missing rating.' },
+			]),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<any>();
+		expect(data).toMatchObject({ success: true, total: 4, processed: 1, skipped: 1, failed: 2 });
+
+		const review = await env.DB.prepare(`SELECT reviewer_name, rating, title, body FROM reviews WHERE asin = ?`)
+			.bind(asin)
+			.first<{ reviewer_name: string; rating: number; title: string; body: string }>();
+		expect(review).toMatchObject({ reviewer_name: 'Amazon Customer', rating: 4, title: 'Looks good', body: 'Nice product.' });
+	});
 });
