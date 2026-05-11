@@ -1203,6 +1203,8 @@ function serveDashboardHTML(): Response {
             let currentReviewPage = 0;
             let hasNextProductPage = false;
             let hasNextReviewPage = false;
+            let isProcessingPendingReviews = false;
+            let stopPendingReviewProcessing = false;
             const PAGE_SIZE = 20;
 
             const icons = {
@@ -1539,21 +1541,32 @@ function serveDashboardHTML(): Response {
             async function processBatch() {
                 const btn = document.getElementById('process-batch-btn');
                 const originalText = btn.textContent;
-                const batchSize = 5;
-                const maxBatches = 100;
+                const batchSize = 1;
+                const maxBatches = 500;
                 let totalProcessed = 0;
                 let totalDone = 0;
                 let totalFailed = 0;
                 let batches = 0;
 
-                btn.disabled = true;
-                btn.textContent = 'Processing...';
-                btn.classList.add('processing');
+                if (isProcessingPendingReviews) {
+                    if (confirm('Stop processing pending reviews after the current review finishes?')) {
+                        stopPendingReviewProcessing = true;
+                        btn.textContent = 'Stopping...';
+                        showMessage('Stopping after current review finishes...', 'error');
+                    }
+                    return;
+                }
+
+                isProcessingPendingReviews = true;
+                stopPendingReviewProcessing = false;
+                btn.textContent = 'Stop Processing';
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn-danger');
 
                 try {
-                    while (batches < maxBatches) {
+                    while (!stopPendingReviewProcessing && batches < maxBatches) {
                         batches++;
-                        btn.textContent = \`Processing batch \${batches}...\`;
+                        btn.textContent = \`Stop Processing (\${totalProcessed})\`;
 
                         const data = await fetchJson(\`/review/generate/bulk?limit=\${batchSize}\`, { method: 'POST' });
                         const results = data.results || [];
@@ -1572,6 +1585,11 @@ function serveDashboardHTML(): Response {
 
                     await Promise.all([loadStats(), activeTab === 'reviews' ? loadReviews() : loadProducts()]);
 
+                    if (stopPendingReviewProcessing) {
+                        showMessage(\`Processing stopped. Processed \${totalProcessed} reviews. Done: \${totalDone}, Failed: \${totalFailed}.\`, 'error');
+                        return;
+                    }
+
                     if (batches >= maxBatches) {
                         showMessage(\`Stopped after \${maxBatches} batches. Processed \${totalProcessed}; refresh and run again if pending reviews remain.\`, 'error');
                         return;
@@ -1587,9 +1605,11 @@ function serveDashboardHTML(): Response {
                     console.error('Failed to process batch:', error);
                     showMessage(error.message || \`Stopped after processing \${totalProcessed} reviews\`, 'error');
                 } finally {
+                    isProcessingPendingReviews = false;
+                    stopPendingReviewProcessing = false;
                     btn.textContent = originalText;
-                    btn.disabled = false;
-                    btn.classList.remove('processing');
+                    btn.classList.remove('btn-danger');
+                    btn.classList.add('btn-secondary');
                 }
             }
 
