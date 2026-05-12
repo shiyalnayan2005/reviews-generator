@@ -14,7 +14,8 @@ export async function handleASINRequest(request: Request, env: Env): Promise<Res
 		const limit = parseInt(params.get('limit') || '-1');
 
 		const asins = await scrapeASINs(brand, limit);
-		const asin_text_list = asins.map((asin) => `https://www.amazon.in/dp/${asin}`).join('\n');
+		//const asin_text_list = asins.map((asin) => `https://www.amazon.in/dp/${asin}`).join('\n');
+		const asin_text_list = asins.join('\n');
 
 		return new Response(asin_text_list, {
 			headers: {
