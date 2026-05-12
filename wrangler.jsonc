@@ -15,6 +15,9 @@
 	//},
 	"upload_source_maps": true,
 	"compatibility_flags": ["nodejs_compat"],
+	"secrets": {
+		"required": ["GEMINI_API_KEY", "HAPPIMESS_SHOPIFY_ADMIN_API", "JONATHANY_SHOPIFY_ADMIN_API"],
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",

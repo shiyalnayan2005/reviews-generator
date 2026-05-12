@@ -1,7 +1,14 @@
-export async function graphqlRequest(env: Env, query: string, variables?: Record<string, any>): Promise<any> {
+import { BrandName } from '../config';
+import { SHOPIFY_STORES } from '../shopifyStores';
+import { validateShopifyStoreConfig } from '../middleware/validation';
+
+export async function graphqlRequest(env: Env, brand: BrandName, query: string, variables?: Record<string, any>): Promise<any> {
 	const maxRetries = 3;
 	let attempt = 0;
-	const url = `https://${env.SHOPIFY_STORE_URL}/admin/api/2025-07/graphql.json`;
+	validateShopifyStoreConfig(brand, env);
+	const store = SHOPIFY_STORES[brand];
+	const url = `https://${store.storeUrl}/admin/api/2025-07/graphql.json`;
+	const adminApiKey = env[store.adminApiKeyEnvName];
 
 	while (attempt < maxRetries) {
 		try {
@@ -9,7 +16,7 @@ export async function graphqlRequest(env: Env, query: string, variables?: Record
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'X-Shopify-Access-Token': env.SHOPIFY_ADMIN_API,
+					'X-Shopify-Access-Token': adminApiKey,
 				},
 				body: JSON.stringify({
 					query,

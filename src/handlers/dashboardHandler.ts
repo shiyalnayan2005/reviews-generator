@@ -16,6 +16,8 @@ import {
 import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
 import { fetchShopifyProductHandleByUPC } from '../services/shopify';
+import { BRANDS_KEY, BrandName } from '../config';
+import { validateBrandName } from '../middleware/validation';
 
 export async function handleDashboard(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
@@ -26,24 +28,26 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			return serveDashboardHTML();
 		}
 
+		const brand = validateBrandName(url.searchParams.get('brand'));
+
 		if (pathname === '/api/products') {
 			const limit = parseInt(url.searchParams.get('limit') || '50');
 			const offset = parseInt(url.searchParams.get('offset') || '0');
 
-			const products = await getProductsWithReviewCounts(env, limit, offset);
+			const products = await getProductsWithReviewCounts(env, brand, limit, offset);
 			return Response.json({ success: true, products });
 		}
 
 		if (pathname === '/api/products/bulk' && request.method === 'POST') {
 			const body = (await request.json().catch(() => ({}))) as { products?: unknown[] } | unknown[];
 			const items = Array.isArray(body) ? body : Array.isArray(body.products) ? body.products : [];
-			const result = await bulkInsertProducts(env, items);
+			const result = await bulkInsertProducts(env, brand, items);
 			return Response.json({ success: true, ...result });
 		}
 
 		if (pathname === '/api/products/shopify-info' && request.method === 'POST') {
 			const limit = parseInt(url.searchParams.get('limit') || '25');
-			const result = await updateShopifyProductInformation(env, limit);
+			const result = await updateShopifyProductInformation(env, brand, limit);
 			return Response.json({ success: true, ...result });
 		}
 
@@ -56,14 +60,14 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			const limit = parseInt(url.searchParams.get('limit') || '100');
 			const offset = parseInt(url.searchParams.get('offset') || '0');
 
-			const reviews = await getProductReviews(env, asin, limit, offset);
+			const reviews = await getProductReviews(env, brand, asin, limit, offset);
 			return Response.json({ success: true, reviews });
 		}
 
 		if (pathname === '/api/reviews/bulk' && request.method === 'POST') {
 			const body = (await request.json().catch(() => ({}))) as { reviews?: unknown[] } | unknown[];
 			const items = Array.isArray(body) ? body : Array.isArray(body.reviews) ? body.reviews : [];
-			const result = await bulkInsertReviews(env, items);
+			const result = await bulkInsertReviews(env, brand, items);
 			return Response.json({ success: true, ...result });
 		}
 
@@ -74,7 +78,7 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 				if (!id) {
 					return handleError(new ValidationError('Review id parameter required'));
 				}
-				await clearReviewAI(env, id);
+				await clearReviewAI(env, brand, id);
 				return Response.json({ success: true });
 			}
 
@@ -92,12 +96,12 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 					return handleError(new ValidationError('ASIN is required'));
 				}
 
-				const product = await env.DB.prepare(`SELECT asin FROM products WHERE asin = ?`).bind(asin).first<{ asin: string }>();
+				const product = await env.DB.prepare(`SELECT asin FROM products WHERE brand_name = ? AND asin = ?`).bind(brand, asin).first<{ asin: string }>();
 				if (!product) {
 					return handleError(new ValidationError('Review ASIN must match an existing product'));
 				}
 
-				const inserted = await insertReviews(env, asin, [
+				const inserted = await insertReviews(env, brand, asin, [
 					{
 						username: body.reviewer_name?.trim() || 'Anonymous',
 						email: body.email?.trim() || '',
@@ -114,20 +118,20 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			}
 
 			if (request.method === 'DELETE') {
-				await deleteReview(env, id);
+				await deleteReview(env, brand, id);
 				return Response.json({ success: true });
 			}
 
 			if (request.method === 'PUT') {
 				const requestBody = (await request.json().catch(() => ({}))) as { title?: string; body?: string; rating?: number };
 				const { title, body: reviewBody, rating } = requestBody;
-				await env.DB.prepare(`UPDATE reviews SET title = ?, body = ?, rating = ? WHERE id = ?`)
-					.bind(title || null, reviewBody || null, rating || 1, parseInt(id))
+				await env.DB.prepare(`UPDATE reviews SET title = ?, body = ?, rating = ? WHERE id = ? AND brand_name = ?`)
+					.bind(title || null, reviewBody || null, rating || 1, parseInt(id), brand)
 					.run();
 				return Response.json({ success: true });
 			}
 
-			const review = await getReview(env, id);
+			const review = await getReview(env, id, brand);
 			if (!review) {
 				return handleError(new ValidationError(`Review not found with id=${id}`));
 			}
@@ -147,6 +151,7 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 				await insertProduct(env, {
 					asin: productAsin,
+					brand_name: brand,
 					name: body.title?.trim() || '',
 					upc_code: body.upc_code?.trim() || '',
 					handle: body.handle?.trim() || '',
@@ -159,14 +164,14 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			}
 
 			if (request.method === 'DELETE') {
-				await deleteProduct(env, asin);
+				await deleteProduct(env, brand, asin);
 				return Response.json({ success: true });
 			}
 
 			if (request.method === 'PUT') {
 				const body = (await request.json().catch(() => ({}))) as { title?: string; upc_code?: string; handle?: string };
 				const { title, upc_code, handle } = body;
-				await updateProduct(env, asin, { title, upc_code, handle });
+				await updateProduct(env, brand, asin, { title, upc_code, handle });
 				return Response.json({ success: true });
 			}
 		}
@@ -181,12 +186,12 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 				return handleError(new ValidationError('Search query required'));
 			}
 
-			const reviews = await searchReviews(env, query, status, limit, offset);
+			const reviews = await searchReviews(env, brand, query, status, limit, offset);
 			return Response.json({ success: true, reviews });
 		}
 
 		if (pathname === '/api/stats') {
-			const stats = await getReviewStats(env);
+			const stats = await getReviewStats(env, brand);
 			return Response.json({ success: true, stats });
 		}
 
@@ -198,6 +203,7 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 
 async function updateShopifyProductInformation(
 	env: Env,
+	brand: BrandName,
 	limit: number,
 ): Promise<{
 	processed: number;
@@ -207,7 +213,7 @@ async function updateShopifyProductInformation(
 	total: number;
 }> {
 	const safeLimit = Math.min(Math.max(limit || 25, 1), 100);
-	const products = await getProductsForShopifyUpdate(env, safeLimit);
+	const products = await getProductsForShopifyUpdate(env, brand, safeLimit);
 	let updated = 0;
 	let notFound = 0;
 	let skipped = 0;
@@ -218,13 +224,13 @@ async function updateShopifyProductInformation(
 			continue;
 		}
 
-		const handle = await fetchShopifyProductHandleByUPC(env, product.upc_code);
+		const handle = await fetchShopifyProductHandleByUPC(env, brand, product.upc_code);
 		if (!handle) {
 			notFound++;
 			continue;
 		}
 
-		await updateProductShopifyHandle(env, product.asin, handle);
+		await updateProductShopifyHandle(env, brand, product.asin, handle);
 		updated++;
 	}
 
@@ -260,6 +266,7 @@ function ratingValue(value: unknown): number {
 
 async function bulkInsertProducts(
 	env: Env,
+	brand: BrandName,
 	items: unknown[],
 ): Promise<{ total: number; processed: number; failed: number; results: BulkItemResult[] }> {
 	const results: BulkItemResult[] = [];
@@ -290,7 +297,7 @@ async function bulkInsertProducts(
 		}
 
 		try {
-			await insertProduct(env, { asin, name: title, upc_code: upcCode, handle });
+			await insertProduct(env, { asin, brand_name: brand, name: title, upc_code: upcCode, handle });
 			processed++;
 			results.push({ index, asin, success: true, message: 'Product saved.' });
 		} catch (error) {
@@ -304,6 +311,7 @@ async function bulkInsertProducts(
 
 async function bulkInsertReviews(
 	env: Env,
+	brand: BrandName,
 	items: unknown[],
 ): Promise<{ total: number; processed: number; failed: number; skipped: number; results: BulkItemResult[] }> {
 	const results: BulkItemResult[] = [];
@@ -347,14 +355,14 @@ async function bulkInsertReviews(
 		}
 
 		try {
-			const product = await env.DB.prepare(`SELECT asin FROM products WHERE asin = ?`).bind(asin).first<{ asin: string }>();
+			const product = await env.DB.prepare(`SELECT asin FROM products WHERE brand_name = ? AND asin = ?`).bind(brand, asin).first<{ asin: string }>();
 			if (!product) {
 				failed++;
 				results.push({ index, asin, success: false, message: 'Product ASIN does not exist.' });
 				continue;
 			}
 
-			const inserted = await insertReviews(env, asin, [{ username: reviewerName, email, stars: rating, title, review: body }]);
+			const inserted = await insertReviews(env, brand, asin, [{ username: reviewerName, email, stars: rating, title, review: body }]);
 			if (inserted) {
 				processed++;
 				results.push({ index, asin, success: true, inserted, message: 'Review inserted.' });
@@ -372,6 +380,7 @@ async function bulkInsertReviews(
 }
 
 function serveDashboardHTML(): Response {
+	const availableBrands = Object.keys(BRANDS_KEY);
 	const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -837,8 +846,12 @@ function serveDashboardHTML(): Response {
             <div class="header">
                 <h1>Reviews Generator Dashboard</h1>
                 <p>Monitor and manage product reviews processing</p>
+                <div style="display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; margin: 14px 0;">
+                    <label for="brand-select" style="font-weight: 700;">Brand</label>
+                    <select id="brand-select" class="form-input" style="max-width: 220px;" onchange="changeBrand(this.value)"></select>
+                </div>
                 <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-                    <a href="/export" class="btn btn-primary" target="_blank">Export Reviews</a>
+                    <a href="/export" class="btn btn-primary" id="export-link" target="_blank">Export Reviews</a>
                     <button class="btn btn-secondary" onclick="openJsonModal()">📄 Upload JSON</button>
                 </div>
             </div>
@@ -1190,6 +1203,8 @@ function serveDashboardHTML(): Response {
         </div>
 
         <script>
+            const AVAILABLE_BRANDS = ${JSON.stringify(availableBrands)};
+            let activeBrand = localStorage.getItem('reviewsGeneratorBrand') || AVAILABLE_BRANDS[0] || '';
             let currentStatus = 'all';
             let currentSearch = '';
             let currentProductAsin = '';
@@ -1216,8 +1231,41 @@ function serveDashboardHTML(): Response {
                 spinner: '<span class="loading" aria-hidden="true"></span>'
             };
 
+            function withBrand(url) {
+                const separator = url.includes('?') ? '&' : '?';
+                return \`\${url}\${separator}brand=\${encodeURIComponent(activeBrand)}\`;
+            }
+
+            function initializeBrandSelector() {
+                const select = document.getElementById('brand-select');
+                select.innerHTML = AVAILABLE_BRANDS.map((brand) => \`<option value="\${escapeHtml(brand)}">\${escapeHtml(brand)}</option>\`).join('');
+                select.value = activeBrand;
+                updateBrandLinks();
+            }
+
+            function updateBrandLinks() {
+                document.getElementById('export-link').href = withBrand('/export');
+            }
+
+            function changeBrand(brand) {
+                activeBrand = brand;
+                localStorage.setItem('reviewsGeneratorBrand', brand);
+                currentProductAsin = '';
+                currentSearch = '';
+                currentProductPage = 0;
+                currentReviewPage = 0;
+                currentProducts = [];
+                currentReviews = [];
+                productOptions = [];
+                productActions = {};
+                reviewActions = {};
+                document.getElementById('search-input').value = '';
+                updateBrandLinks();
+                refreshData();
+            }
+
             async function fetchJson(url, options = {}) {
-                const response = await fetch(url, options);
+                const response = await fetch(url.startsWith('/') && !url.includes('brand=') ? withBrand(url) : url, options);
                 const contentType = response.headers.get('content-type') || '';
                 const payload = contentType.includes('application/json') ? await response.json() : { error: { message: await response.text() } };
 
@@ -2102,7 +2150,7 @@ function serveDashboardHTML(): Response {
                 statusDiv.innerHTML = '<div style="padding: 10px; background: #dbeafe; border-radius: 4px;">Processing data...</div>';
                 
                 try {
-                    const response = await fetch('/webhook/products', {
+                    const response = await fetch(withBrand('/webhook/products'), {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -2147,6 +2195,7 @@ function serveDashboardHTML(): Response {
             });
 
             // Initial load
+            initializeBrandSelector();
             refreshData();
         </script>
     </body>

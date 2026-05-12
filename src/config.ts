@@ -5,6 +5,8 @@ export const BRANDS_KEY = {
 	jonathany: '18809330031',
 };
 
+export type BrandName = keyof typeof BRANDS_KEY;
+
 export const PROCESSING_CONFIG = {
 	BATCH_SIZE: 5, // Process 5 reviews at a time
 	MAX_RETRIES: 3,

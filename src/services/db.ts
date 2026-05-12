@@ -12,35 +12,35 @@ export async function insertProduct(env: Env, data: ProductInsertData): Promise<
 	try {
 		await env.DB.prepare(
 			`
-      INSERT INTO products (asin, title, handle, upc_code)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(asin) DO UPDATE SET
-        title = excluded.title,
-        handle = excluded.handle,
-        upc_code = excluded.upc_code
-    `,
+			INSERT INTO products (asin, brand_name, title, handle, upc_code)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(asin, brand_name) DO UPDATE SET
+				title = excluded.title,
+				handle = excluded.handle,
+				upc_code = excluded.upc_code
+		`,
 		)
-			.bind(data.asin, data.name || null, data.handle || null, data.upc_code || null)
+			.bind(data.asin, data.brand_name, data.name || null, data.handle || null, data.upc_code || null)
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to insert product: ${error}`);
 	}
 }
 
-export async function getProductsForShopifyUpdate(env: Env, limit: number = 25): Promise<ShopifyProductUpdateCandidate[]> {
+export async function getProductsForShopifyUpdate(env: Env, brand: string, limit: number = 25): Promise<ShopifyProductUpdateCandidate[]> {
 	try {
 		const result = await env.DB.prepare(
 			`
-      SELECT asin, upc_code, handle
-      FROM products
-      WHERE upc_code IS NOT NULL AND TRIM(upc_code) != ''
-      ORDER BY
-        CASE WHEN handle IS NULL OR TRIM(handle) = '' THEN 0 ELSE 1 END,
-        created_at DESC
-      LIMIT ?
-    `,
+			SELECT asin, upc_code, handle
+			FROM products
+			WHERE brand_name = ? AND upc_code IS NOT NULL AND TRIM(upc_code) != ''
+			ORDER BY
+				CASE WHEN handle IS NULL OR TRIM(handle) = '' THEN 0 ELSE 1 END,
+				created_at DESC
+			LIMIT ?
+		`,
 		)
-			.bind(limit)
+			.bind(brand, limit)
 			.all<ShopifyProductUpdateCandidate>();
 		return result.results || [];
 	} catch (error) {
@@ -48,17 +48,17 @@ export async function getProductsForShopifyUpdate(env: Env, limit: number = 25):
 	}
 }
 
-export async function updateProductShopifyHandle(env: Env, asin: string, handle: string): Promise<void> {
+export async function updateProductShopifyHandle(env: Env, brand: string, asin: string, handle: string): Promise<void> {
 	try {
-		await env.DB.prepare(`UPDATE products SET handle = ? WHERE asin = ?`)
-			.bind(handle || null, asin)
+		await env.DB.prepare(`UPDATE products SET handle = ? WHERE brand_name = ? AND asin = ?`)
+			.bind(handle || null, brand, asin)
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to update Shopify product handle: ${error}`);
 	}
 }
 
-export async function updateProduct(env: Env, asin: string, data: { title?: string; upc_code?: string; handle?: string }): Promise<void> {
+export async function updateProduct(env: Env, brand: string, asin: string, data: { title?: string; upc_code?: string; handle?: string }): Promise<void> {
 	try {
 		const updates = [];
 		const params = [];
@@ -78,8 +78,8 @@ export async function updateProduct(env: Env, asin: string, data: { title?: stri
 
 		if (updates.length === 0) return;
 
-		const sql = `UPDATE products SET ${updates.join(', ')} WHERE asin = ?`;
-		params.push(asin);
+		const sql = `UPDATE products SET ${updates.join(', ')} WHERE brand_name = ? AND asin = ?`;
+		params.push(brand, asin);
 
 		await env.DB.prepare(sql)
 			.bind(...params)
@@ -89,13 +89,13 @@ export async function updateProduct(env: Env, asin: string, data: { title?: stri
 	}
 }
 
-export async function insertReviews(env: Env, asin: string, reviews: ReviewInsertData[]): Promise<number> {
+export async function insertReviews(env: Env, brand: string, asin: string, reviews: ReviewInsertData[]): Promise<number> {
 	try {
 		const insertStmt = env.DB.prepare(`
-			INSERT INTO reviews (asin, reviewer_name, email, rating, title, body)
-			SELECT ?, ?, ?, ?, ?, ?
+			INSERT INTO reviews (asin, brand_name, reviewer_name, email, rating, title, body)
+			SELECT ?, ?, ?, ?, ?, ?, ?
 			WHERE NOT EXISTS (
-				SELECT 1 FROM reviews WHERE asin = ? AND title = ?
+				SELECT 1 FROM reviews WHERE brand_name = ? AND asin = ? AND title = ?
 			)
 		`);
 
@@ -103,7 +103,7 @@ export async function insertReviews(env: Env, asin: string, reviews: ReviewInser
 			const title = normalizeReviewTitle(r.title);
 			const review = normalizeReviewBody(r.review);
 			const rating = normalizeReviewRating(r.stars);
-			return insertStmt.bind(asin, r.username || 'Anonymous', r.email || '', rating, title, review, asin, title);
+			return insertStmt.bind(asin, brand, r.username || 'Anonymous', r.email || '', rating, title, review, brand, asin, title);
 		});
 
 		const results = await env.DB.batch(batch);
@@ -137,10 +137,12 @@ function normalizeReviewRating(stars?: string | number): number {
 	return Number.isFinite(rating) && rating > 0 ? rating : 1;
 }
 
-export async function getReview(env: Env, id: string): Promise<Review | null> {
+export async function getReview(env: Env, id: string, brand?: string): Promise<Review | null> {
 	try {
 		if (!id) return null;
-		const review_data = await env.DB.prepare('SELECT * FROM reviews WHERE id = ?').bind(parseInt(id)).first<Review>();
+		const sql = brand ? 'SELECT * FROM reviews WHERE id = ? AND brand_name = ?' : 'SELECT * FROM reviews WHERE id = ?';
+		const stmt = brand ? env.DB.prepare(sql).bind(parseInt(id), brand) : env.DB.prepare(sql).bind(parseInt(id));
+		const review_data = await stmt.first<Review>();
 		return review_data || null;
 	} catch (error) {
 		throw new DatabaseError(`Failed to get review: ${error}`);
@@ -157,48 +159,52 @@ export async function updateReview(env: Env, id: string, status: string, aiRevie
 	}
 }
 
-export async function clearReviewAI(env: Env, id: string): Promise<void> {
+export async function clearReviewAI(env: Env, brand: string, id: string): Promise<void> {
 	try {
-		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, email = ? WHERE id = ?`)
-			.bind('pending', '', '', '', parseInt(id))
+		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, email = ? WHERE id = ? AND brand_name = ?`)
+			.bind('pending', '', '', '', parseInt(id), brand)
 			.run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to clear review AI content: ${error}`);
 	}
 }
 
-export async function deleteReview(env: Env, id: string): Promise<void> {
+export async function deleteReview(env: Env, brand: string, id: string): Promise<void> {
 	try {
-		await env.DB.prepare(`DELETE FROM reviews WHERE id = ?`).bind(parseInt(id)).run();
+		await env.DB.prepare(`DELETE FROM reviews WHERE id = ? AND brand_name = ?`).bind(parseInt(id), brand).run();
 	} catch (error) {
 		throw new DatabaseError(`Failed to delete review: ${error}`);
 	}
 }
 
-export async function deleteProduct(env: Env, asin: string): Promise<void> {
+export async function deleteProduct(env: Env, brand: string, asin: string): Promise<void> {
 	try {
 		await env.DB.batch([
-			env.DB.prepare(`DELETE FROM reviews WHERE asin = ?`).bind(asin),
-			env.DB.prepare(`DELETE FROM products WHERE asin = ?`).bind(asin),
+			env.DB.prepare(`DELETE FROM reviews WHERE brand_name = ? AND asin = ?`).bind(brand, asin),
+			env.DB.prepare(`DELETE FROM products WHERE brand_name = ? AND asin = ?`).bind(brand, asin),
 		]);
 	} catch (error) {
 		throw new DatabaseError(`Failed to delete product: ${error}`);
 	}
 }
 
-export async function getPendingReviews(env: Env, limit: number = 10): Promise<Review[]> {
+export async function getPendingReviews(env: Env, limit: number = 10, brand?: string): Promise<Review[]> {
 	try {
-		const result = await env.DB.prepare(`SELECT * FROM reviews WHERE ai_status = ? LIMIT ?`).bind('pending', limit).all<Review>();
+		const sql = brand
+			? `SELECT * FROM reviews WHERE brand_name = ? AND ai_status = ? LIMIT ?`
+			: `SELECT * FROM reviews WHERE ai_status = ? LIMIT ?`;
+		const stmt = brand ? env.DB.prepare(sql).bind(brand, 'pending', limit) : env.DB.prepare(sql).bind('pending', limit);
+		const result = await stmt.all<Review>();
 		return result.results || [];
 	} catch (error) {
 		throw new DatabaseError(`Failed to get pending reviews: ${error}`);
 	}
 }
 
-export async function getProducts(env: Env, limit: number = 50, offset: number = 0): Promise<Product[]> {
+export async function getProducts(env: Env, brand: string, limit: number = 50, offset: number = 0): Promise<Product[]> {
 	try {
-		const result = await env.DB.prepare(`SELECT * FROM products ORDER BY created_at DESC LIMIT ? OFFSET ?`)
-			.bind(limit, offset)
+		const result = await env.DB.prepare(`SELECT * FROM products WHERE brand_name = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+			.bind(brand, limit, offset)
 			.all<Product>();
 		return result.results || [];
 	} catch (error) {
@@ -208,6 +214,7 @@ export async function getProducts(env: Env, limit: number = 50, offset: number =
 
 export async function getProductsWithReviewCounts(
 	env: Env,
+	brand: string,
 	limit: number = 50,
 	offset: number = 0,
 ): Promise<(Product & { review_count: number })[]> {
@@ -216,13 +223,14 @@ export async function getProductsWithReviewCounts(
 			`
 			SELECT p.*, COUNT(r.id) as review_count
 			FROM products p
-			LEFT JOIN reviews r ON p.asin = r.asin
-			GROUP BY p.id, p.asin, p.title, p.handle, p.upc_code, p.created_at
+			LEFT JOIN reviews r ON p.asin = r.asin AND p.brand_name = r.brand_name
+			WHERE p.brand_name = ?
+			GROUP BY p.id, p.asin, p.brand_name, p.title, p.handle, p.upc_code, p.created_at
 			ORDER BY p.created_at DESC
 			LIMIT ? OFFSET ?
 		`,
 		)
-			.bind(limit, offset)
+			.bind(brand, limit, offset)
 			.all<Product & { review_count: number }>();
 		return result.results || [];
 	} catch (error) {
@@ -230,10 +238,10 @@ export async function getProductsWithReviewCounts(
 	}
 }
 
-export async function getProductReviews(env: Env, asin: string, limit: number = 100, offset: number = 0): Promise<Review[]> {
+export async function getProductReviews(env: Env, brand: string, asin: string, limit: number = 100, offset: number = 0): Promise<Review[]> {
 	try {
-		const result = await env.DB.prepare(`SELECT * FROM reviews WHERE asin = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`)
-			.bind(asin, limit, offset)
+		const result = await env.DB.prepare(`SELECT * FROM reviews WHERE brand_name = ? AND asin = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+			.bind(brand, asin, limit, offset)
 			.all<Review>();
 		return result.results || [];
 	} catch (error) {
@@ -241,10 +249,10 @@ export async function getProductReviews(env: Env, asin: string, limit: number = 
 	}
 }
 
-export async function searchReviews(env: Env, query: string, status?: string, limit: number = 50, offset: number = 0): Promise<Review[]> {
+export async function searchReviews(env: Env, brand: string, query: string, status?: string, limit: number = 50, offset: number = 0): Promise<Review[]> {
 	try {
-		let sql = `SELECT * FROM reviews WHERE (title LIKE ? OR body LIKE ? OR ai_body LIKE ?)`;
-		const params = [`%${query}%`, `%${query}%`, `%${query}%`];
+		let sql = `SELECT * FROM reviews WHERE brand_name = ? AND (title LIKE ? OR body LIKE ? OR ai_body LIKE ?)`;
+		const params = [brand, `%${query}%`, `%${query}%`, `%${query}%`];
 
 		if (status) {
 			sql += ` AND ai_status = ?`;
@@ -264,7 +272,7 @@ export async function searchReviews(env: Env, query: string, status?: string, li
 	}
 }
 
-export async function getReviewStats(env: Env): Promise<{
+export async function getReviewStats(env: Env, brand: string): Promise<{
 	total: number;
 	pending: number;
 	processing: number;
@@ -281,8 +289,11 @@ export async function getReviewStats(env: Env): Promise<{
 				SUM(CASE WHEN ai_status = 'done' THEN 1 ELSE 0 END) as done,
 				SUM(CASE WHEN ai_status = 'failed' THEN 1 ELSE 0 END) as failed
 			FROM reviews
+			WHERE brand_name = ?
 		`,
-		).all();
+		)
+			.bind(brand)
+			.all();
 
 		const stats = result.results?.[0] as any;
 		return {
@@ -297,9 +308,11 @@ export async function getReviewStats(env: Env): Promise<{
 	}
 }
 
-export async function getAllReviews(env: Env, status: string, limit: number): Promise<Review[]> {
+export async function getAllReviews(env: Env, brand: string, status: string, limit: number): Promise<Review[]> {
 	try {
-		const result = await env.DB.prepare(`SELECT * FROM reviews WHERE ai_status = ? LIMIT ?`).bind(status, limit).all<Review>();
+		const result = await env.DB.prepare(`SELECT * FROM reviews WHERE brand_name = ? AND ai_status = ? LIMIT ?`)
+			.bind(brand, status, limit)
+			.all<Review>();
 		return result.results || [];
 	} catch (error) {
 		throw new DatabaseError(`Failed to get all reviews: ${error}`);

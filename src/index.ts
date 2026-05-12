@@ -4,7 +4,6 @@ import { handleReviewGenerate, handleReviewBulkGenerate, handleReviewStats, proc
 import { handleDashboard } from './handlers/dashboardHandler';
 import { handleError } from './middleware/errorHandler';
 import { exportReviews } from './handlers/exportHandler';
-import { fetchShopifyProductHandleByUPC } from './services/shopify';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -51,7 +50,7 @@ export default {
 
 			// Export route
 			if (method === 'GET' && pathname.startsWith('/export')) {
-				return exportReviews(env);
+				return exportReviews(request, env);
 			}
 
 			return new Response('Not Found', { status: 404 });

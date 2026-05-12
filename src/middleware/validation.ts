@@ -1,16 +1,29 @@
 import { ValidationError } from '../lib/errors';
-import { BRANDS_KEY } from '../config';
+import { BRANDS_KEY, BrandName } from '../config';
+import { SHOPIFY_STORES } from '../shopifyStores';
+
+export function validateBrandName(brand: string | null): BrandName {
+	if (!brand) throw new ValidationError('brand is required');
+	if (!(brand in BRANDS_KEY)) {
+		throw new ValidationError(`Unknown brand: ${brand}`);
+	}
+	return brand as BrandName;
+}
 
 export function validateASINRequest(params: URLSearchParams): void {
 	const brand = params.get('brand');
 	const limit = params.get('limit');
 
-	if (!brand) throw new ValidationError('brand parameter required');
-	if (!(brand in BRANDS_KEY)) {
-		throw new ValidationError(`Unknown brand: ${brand}`);
-	}
+	validateBrandName(brand);
 	if (limit && isNaN(parseInt(limit))) {
 		throw new ValidationError('limit must be a number');
+	}
+}
+
+export function validateShopifyStoreConfig(brand: BrandName, env: Env): void {
+	const store = SHOPIFY_STORES[brand];
+	if (!store?.storeUrl || !env[store.adminApiKeyEnvName]) {
+		throw new ValidationError(`Shopify store configuration missing for brand: ${brand}`);
 	}
 }
 

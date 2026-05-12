@@ -1,4 +1,5 @@
 import { graphqlRequest } from './graphql';
+import { BrandName } from '../config';
 
 interface ShopifyGraphQLResponse<T> {
 	data?: T;
@@ -11,12 +12,12 @@ interface ProductHandleNode {
 	};
 }
 
-export async function fetchShopifyProductHandleByUPC(env: Env, upc: string): Promise<string> {
+export async function fetchShopifyProductHandleByUPC(env: Env, brand: BrandName, upc: string): Promise<string> {
 	const normalizedUPC = upc?.trim();
 	if (!normalizedUPC) return '';
 
 	try {
-		const search = `barcode:"${upc}"`;
+		const search = `barcode:"${normalizedUPC}"`;
 		const graphqlQuery = `
       query($search: String!) {
         productVariants(first: 1, query: $search) {
@@ -30,7 +31,7 @@ export async function fetchShopifyProductHandleByUPC(env: Env, upc: string): Pro
         }
       }
     `;
-		const result = await graphqlRequest(env, graphqlQuery, { search });
+		const result = await graphqlRequest(env, brand, graphqlQuery, { search });
 		const data = (await result.json()) as ShopifyGraphQLResponse<{
 			productVariants?: {
 				edges?: Array<{

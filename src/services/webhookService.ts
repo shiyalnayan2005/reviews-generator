@@ -2,6 +2,7 @@ import { insertProduct, insertReviews } from './db';
 import { AmazonProductData } from '../types';
 import { DatabaseError } from '../lib/errors';
 import { fetchShopifyProductHandleByUPC } from './shopify';
+import { BrandName } from '../config';
 
 export interface WebhookPayload {
 	input: string;
@@ -10,6 +11,7 @@ export interface WebhookPayload {
 
 export async function processWebhookPayloads(
 	env: Env,
+	brand: BrandName,
 	payloads: WebhookPayload[],
 ): Promise<{
 	processed: number;
@@ -26,10 +28,11 @@ export async function processWebhookPayloads(
 			const result: AmazonProductData = typeof item.result === 'string' ? JSON.parse(item.result) : item.result;
 			const upcCode = result.product_information?.upc?.trim() || result.product_information?.UPC?.trim() || '';
 
-			const handle = await fetchShopifyProductHandleByUPC(env, upcCode);
+			const handle = await fetchShopifyProductHandleByUPC(env, brand, upcCode);
 
 			await insertProduct(env, {
 				asin,
+				brand_name: brand,
 				name: result.name || '',
 				handle: handle,
 				upc_code: upcCode,
@@ -38,6 +41,7 @@ export async function processWebhookPayloads(
 			if (result.reviews?.length) {
 				await insertReviews(
 					env,
+					brand,
 					asin,
 					result.reviews.map((r) => ({ ...r, email: '' })),
 				);

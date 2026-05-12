@@ -1,15 +1,15 @@
 import { getReview, updateReview, getPendingReviews, getReviewStats } from '../services/db';
 import { AIReviewOutput, generateReviewWithRetry } from '../services/aiService';
-import { validateReviewId } from '../middleware/validation';
+import { validateBrandName, validateReviewId } from '../middleware/validation';
 import { handleError } from '../middleware/errorHandler';
 import { ValidationError } from '../lib/errors';
-import { PROCESSING_CONFIG } from '../config';
+import { BrandName, PROCESSING_CONFIG } from '../config';
 
-export async function generateReviewById(env: Env, id: string): Promise<AIReviewOutput> {
+export async function generateReviewById(env: Env, id: string, brand?: BrandName): Promise<AIReviewOutput> {
 	validateReviewId(id);
 
 	console.log('Review fetching started...');
-	const review = await getReview(env, id);
+	const review = await getReview(env, id, brand);
 	console.log('Review fetching end...', review);
 
 	if (!review) {
@@ -33,16 +33,16 @@ export async function generateReviewById(env: Env, id: string): Promise<AIReview
 	return aiReview;
 }
 
-export async function processPendingReviews(env: Env, limit: number): Promise<Array<{ id: number; status: 'done' | 'failed' }>> {
+export async function processPendingReviews(env: Env, limit: number, brand?: BrandName): Promise<Array<{ id: number; status: 'done' | 'failed' }>> {
 	console.log(`Processing ${limit} pending reviews...`);
 
-	const reviews = await getPendingReviews(env, limit);
+	const reviews = await getPendingReviews(env, limit, brand);
 	const results: Array<{ id: number; status: 'done' | 'failed' }> = [];
 
 	for (const review of reviews) {
 		try {
 			console.log(`Processing review ${review.id}...`);
-			await generateReviewById(env, review.id.toString());
+			await generateReviewById(env, review.id.toString(), brand);
 			results.push({ id: review.id, status: 'done' });
 			console.log(`Completed review ${review.id}`);
 		} catch (err) {
@@ -59,8 +59,9 @@ export async function handleReviewGenerate(request: Request, env: Env): Promise<
 	try {
 		const url = new URL(request.url);
 		const id = url.searchParams.get('id');
+		const brand = validateBrandName(url.searchParams.get('brand'));
 
-		const aiBody = await generateReviewById(env, id!);
+		const aiBody = await generateReviewById(env, id!, brand);
 		return Response.json({ success: true, data: { ...aiBody } });
 	} catch (error) {
 		const id = new URL(request.url).searchParams.get('id');
@@ -79,8 +80,9 @@ export async function handleReviewBulkGenerate(request: Request, env: Env): Prom
 	try {
 		const url = new URL(request.url);
 		const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), PROCESSING_CONFIG.BATCH_SIZE);
+		const brand = validateBrandName(url.searchParams.get('brand'));
 
-		const results = await processPendingReviews(env, limit);
+		const results = await processPendingReviews(env, limit, brand);
 		if (!results.length) {
 			return Response.json({ success: true, processed: 0, results: [], message: 'No reviews to process' });
 		}
@@ -97,7 +99,8 @@ export async function handleReviewBulkGenerate(request: Request, env: Env): Prom
 
 export async function handleReviewStats(request: Request, env: Env): Promise<Response> {
 	try {
-		const stats = await getReviewStats(env);
+		const brand = validateBrandName(new URL(request.url).searchParams.get('brand'));
+		const stats = await getReviewStats(env, brand);
 		return Response.json({ success: true, stats });
 	} catch (error) {
 		return handleError(error);

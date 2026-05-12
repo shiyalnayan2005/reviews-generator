@@ -1,4 +1,7 @@
-export async function exportReviews(env: Env): Promise<Response> {
+import { validateBrandName } from '../middleware/validation';
+
+export async function exportReviews(request: Request, env: Env): Promise<Response> {
+	const brand = validateBrandName(new URL(request.url).searchParams.get('brand'));
 	const result = await env.DB.prepare(
 		`
     SELECT 
@@ -9,10 +12,12 @@ export async function exportReviews(env: Env): Promise<Response> {
       r.reviewer_name,
       r.email
     FROM reviews r
-    JOIN products p ON r.asin = p.asin
-    WHERE r.ai_body IS NOT NULL
+    JOIN products p ON r.asin = p.asin AND r.brand_name = p.brand_name
+    WHERE r.brand_name = ? AND r.ai_body IS NOT NULL
   `,
-	).all();
+	)
+		.bind(brand)
+		.all();
 
 	const formatted = result.results.map((row: any) => ({
 		'Shopify Product Handle': row.handle,
@@ -27,7 +32,7 @@ export async function exportReviews(env: Env): Promise<Response> {
 	return new Response(JSON.stringify(formatted, null, 2), {
 		headers: {
 			'Content-Type': 'application/json',
-			'Content-Disposition': 'attachment; filename=reviews_export.json',
+			'Content-Disposition': `attachment; filename=${brand}_reviews_export.json`,
 		},
 	});
 }

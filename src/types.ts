@@ -1,6 +1,7 @@
 export interface Product {
 	id: number;
 	asin: string;
+	brand_name: string;
 	title: string | null;
 	handle: string | null;
 	upc_code: string | null;
@@ -11,6 +12,7 @@ export interface Product {
 export interface Review {
 	id: number;
 	asin: string;
+	brand_name: string;
 	reviewer_name: string | null;
 	rating: number | null;
 	title: string | null;
@@ -49,6 +51,7 @@ export interface AmazonReview {
 // Database operation types
 export interface ProductInsertData {
 	asin: string;
+	brand_name: string;
 	name?: string;
 	handle?: string;
 	upc_code?: string;
