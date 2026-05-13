@@ -1936,10 +1936,13 @@ function serveDashboardHTML(): Response {
             const bulkExamples = {
                 products: [
                     {
-                        asin: 'B09BR9D33J',
-                        title: 'Kitchen Trash Can',
-                        upc_code: '123456789012',
-                        handle: 'kitchen-trash-can'
+                        input: 'https://www.amazon.com/dp/B09BR9D33J',
+                        result: {
+                            name: 'Kitchen Trash Can',
+                            product_information: {
+                                upc: '123456789012'
+                            }
+                        }
                     }
                 ],
                 reviews: [
@@ -1979,9 +1982,10 @@ function serveDashboardHTML(): Response {
                     ? 'Import products from an array. Existing ASINs are updated.'
                     : 'Import reviews from an array. Bad rows are reported and the rest continue.';
                 document.getElementById('bulk-json-help').textContent = isProducts
-                    ? 'Required: asin, title. Optional: upc_code, handle.'
+                    ? 'Paste a JSON array using the webhook product format: input and result.name. UPC is read from result.product_information.upc.'
                     : 'Required: asin, title, content, review_count. ASIN must already exist in products.';
-                document.getElementById('bulk-json-input').value = JSON.stringify(bulkExamples[type], null, 2);
+                document.getElementById('bulk-json-input').value = '';
+                document.getElementById('bulk-json-input').placeholder = JSON.stringify(bulkExamples[type], null, 2);
                 document.getElementById('bulk-json-status').style.display = 'none';
                 document.getElementById('bulk-json-status').textContent = '';
                 document.getElementById('bulk-json-modal').classList.remove('hidden');
