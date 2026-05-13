@@ -18,7 +18,7 @@ import { ValidationError } from '../lib/errors';
 import { fetchShopifyProductHandleByUPC } from '../services/shopify';
 import { BRANDS_KEY, BrandName } from '../config';
 import { validateBrandName } from '../middleware/validation';
-import type { AmazonProductData } from '../types';
+import type { AmazonProductData, AmazonReview } from '../types';
 
 export async function handleDashboard(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
@@ -249,6 +249,9 @@ interface BulkItemResult {
 	asin?: string;
 	success: boolean;
 	inserted?: number;
+	reviewsInserted?: number;
+	reviewsSkipped?: number;
+	reviewsFailed?: number;
 	message: string;
 }
 
@@ -286,7 +289,30 @@ function asinFromInput(value: unknown): string {
 	return segments.at(-1) || input;
 }
 
-function normalizeBulkProductItem(item: Record<string, unknown>): { asin: string; title: string; upcCode: string; handle: string } {
+function normalizeProductReview(value: unknown): AmazonReview | null {
+	const item = asRecord(value);
+	if (!item) return null;
+
+	const title = stringValue(item.title);
+	const review = stringValue(item.review ?? item.body ?? item.content);
+	const stars = item.stars ?? item.rating ?? item.review_count;
+
+	if (!title && !review && stars == null) return null;
+
+	return {
+		username: stringValue(item.username ?? item.reviewer_name ?? item.name) || 'Anonymous',
+		stars: stars as string | number | undefined,
+		title,
+		review,
+	};
+}
+
+function normalizeBulkProductReviews(item: Record<string, unknown>, result: AmazonProductData | null): AmazonReview[] {
+	const reviews = Array.isArray(item.reviews) ? item.reviews : Array.isArray(result?.reviews) ? result.reviews : [];
+	return reviews.map(normalizeProductReview).filter((review): review is AmazonReview => Boolean(review));
+}
+
+function normalizeBulkProductItem(item: Record<string, unknown>): { asin: string; title: string; upcCode: string; handle: string; reviews: AmazonReview[] } {
 	const result = parseProductResult(item.result);
 	const productInformation = result?.product_information;
 
@@ -295,6 +321,7 @@ function normalizeBulkProductItem(item: Record<string, unknown>): { asin: string
 		title: stringValue(item.title ?? item.name ?? result?.name),
 		upcCode: stringValue(item.upc_code ?? item.upc ?? item.UPC ?? productInformation?.upc ?? productInformation?.UPC),
 		handle: stringValue(item.handle ?? item.shopify_handle),
+		reviews: normalizeBulkProductReviews(item, result),
 	};
 }
 
@@ -302,10 +329,13 @@ async function bulkInsertProducts(
 	env: Env,
 	brand: BrandName,
 	items: unknown[],
-): Promise<{ total: number; processed: number; failed: number; results: BulkItemResult[] }> {
+): Promise<{ total: number; processed: number; failed: number; reviewsInserted: number; reviewsSkipped: number; reviewsFailed: number; results: BulkItemResult[] }> {
 	const results: BulkItemResult[] = [];
 	let processed = 0;
 	let failed = 0;
+	let reviewsInserted = 0;
+	let reviewsSkipped = 0;
+	let reviewsFailed = 0;
 
 	for (let index = 0; index < items.length; index++) {
 		const item = asRecord(items[index]);
@@ -315,7 +345,7 @@ async function bulkInsertProducts(
 			continue;
 		}
 
-		const { asin, title, upcCode, handle: providedHandle } = normalizeBulkProductItem(item);
+		const { asin, title, upcCode, handle: providedHandle, reviews } = normalizeBulkProductItem(item);
 
 		if (!asin) {
 			failed++;
@@ -332,6 +362,39 @@ async function bulkInsertProducts(
 			const handle = providedHandle || (upcCode ? await fetchShopifyProductHandleByUPC(env, brand, upcCode) : '');
 			await insertProduct(env, { asin, brand_name: brand, name: title, upc_code: upcCode, handle });
 			processed++;
+
+			if (reviews.length) {
+				try {
+					const inserted = await insertReviews(
+						env,
+						brand,
+						asin,
+						reviews.map((review) => ({ ...review, email: '' })),
+					);
+					const skipped = reviews.length - inserted;
+					reviewsInserted += inserted;
+					reviewsSkipped += skipped;
+					results.push({
+						index,
+						asin,
+						success: true,
+						reviewsInserted: inserted,
+						reviewsSkipped: skipped,
+						message: `Product saved. ${inserted} review${inserted === 1 ? '' : 's'} inserted${skipped ? `, ${skipped} skipped as duplicate` : ''}.`,
+					});
+				} catch (reviewError) {
+					reviewsFailed += reviews.length;
+					results.push({
+						index,
+						asin,
+						success: false,
+						reviewsFailed: reviews.length,
+						message: reviewError instanceof Error ? `Product saved, but reviews failed: ${reviewError.message}` : 'Product saved, but reviews failed.',
+					});
+				}
+				continue;
+			}
+
 			results.push({ index, asin, success: true, message: 'Product saved.' });
 		} catch (error) {
 			failed++;
@@ -339,7 +402,7 @@ async function bulkInsertProducts(
 		}
 	}
 
-	return { total: items.length, processed, failed, results };
+	return { total: items.length, processed, failed, reviewsInserted, reviewsSkipped, reviewsFailed, results };
 }
 
 async function bulkInsertReviews(
@@ -1941,7 +2004,15 @@ function serveDashboardHTML(): Response {
                             name: 'Kitchen Trash Can',
                             product_information: {
                                 upc: '123456789012'
-                            }
+                            },
+                            reviews: [
+                                {
+                                    username: 'Amazon Customer',
+                                    stars: 4,
+                                    title: 'Looks good',
+                                    review: 'The bags that came with the garbage bin were too small.'
+                                }
+                            ]
                         }
                     }
                 ],
@@ -2003,6 +2074,13 @@ function serveDashboardHTML(): Response {
                     \`Skipped: \${result.skipped || 0}\`,
                     \`Failed: \${result.failed || 0}\`
                 ];
+                if (result.reviewsInserted || result.reviewsSkipped || result.reviewsFailed) {
+                    lines.push(
+                        \`Reviews inserted: \${result.reviewsInserted || 0}\`,
+                        \`Reviews skipped: \${result.reviewsSkipped || 0}\`,
+                        \`Reviews failed: \${result.reviewsFailed || 0}\`
+                    );
+                }
                 const problemRows = (result.results || []).filter((item) => !item.success || item.inserted === 0).slice(0, 20);
                 if (problemRows.length) {
                     lines.push('', 'Details:');

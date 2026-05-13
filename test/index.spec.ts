@@ -184,6 +184,46 @@ describe('Reviews Generator Worker', () => {
 		expect(product).toMatchObject({ title: 'Bulk Product', upc_code: '111222333444', handle: 'bulk-product' });
 	});
 
+	it('bulk imports product reviews from webhook-shaped product JSON', async () => {
+		const asin = `BULK-WEBHOOK-${Date.now()}`;
+		const request = new IncomingRequest('http://example.com/api/products/bulk?brand=happimess', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				products: [
+					{
+						input: `https://www.amazon.com/dp/${asin}`,
+						result: {
+							name: 'Bulk Product With Reviews',
+							product_information: { upc: '' },
+							reviews: [
+								{ username: 'Tester', stars: 5, title: 'Great', review: 'Works well' },
+								{ username: 'Tester', stars: 4, title: 'Good', review: 'Pretty useful' },
+							],
+						},
+					},
+				],
+			}),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<any>();
+		expect(data).toMatchObject({ success: true, total: 1, processed: 1, failed: 0, reviewsInserted: 2, reviewsSkipped: 0, reviewsFailed: 0 });
+
+		const product = await env.DB.prepare(`SELECT title FROM products WHERE asin = ?`).bind(asin).first<{ title: string }>();
+		const reviewCount = await env.DB.prepare(`SELECT COUNT(*) as total FROM reviews WHERE asin = ?`).bind(asin).first<{ total: number }>();
+		const review = await env.DB.prepare(`SELECT reviewer_name, rating, title, body FROM reviews WHERE asin = ? AND title = ?`)
+			.bind(asin, 'Great')
+			.first<{ reviewer_name: string; rating: number; title: string; body: string }>();
+
+		expect(product).toMatchObject({ title: 'Bulk Product With Reviews' });
+		expect(reviewCount?.total).toBe(2);
+		expect(review).toMatchObject({ reviewer_name: 'Tester', rating: 5, title: 'Great', body: 'Works well' });
+	});
+
 	it('bulk imports products when the products table is missing the ASIN brand unique constraint', async () => {
 		await env.DB.prepare(`DROP TABLE IF EXISTS products`).run();
 		await env.DB.prepare(
