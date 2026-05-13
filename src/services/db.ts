@@ -103,7 +103,12 @@ export async function updateProductShopifyHandle(env: Env, brand: string, asin: 
 	}
 }
 
-export async function updateProduct(env: Env, brand: string, asin: string, data: { title?: string; upc_code?: string; handle?: string }): Promise<void> {
+export async function updateProduct(
+	env: Env,
+	brand: string,
+	asin: string,
+	data: { title?: string; upc_code?: string; handle?: string },
+): Promise<void> {
 	try {
 		const updates = [];
 		const params = [];
@@ -178,7 +183,7 @@ function normalizeReviewBody(review?: string): string {
 }
 
 function normalizeReviewRating(stars?: string | number): number {
-	const rating = parseFloat(String(stars));
+	const rating = parseInt(String(stars));
 	return Number.isFinite(rating) && rating > 0 ? rating : 1;
 }
 
@@ -294,7 +299,14 @@ export async function getProductReviews(env: Env, brand: string, asin: string, l
 	}
 }
 
-export async function searchReviews(env: Env, brand: string, query: string, status?: string, limit: number = 50, offset: number = 0): Promise<Review[]> {
+export async function searchReviews(
+	env: Env,
+	brand: string,
+	query: string,
+	status?: string,
+	limit: number = 50,
+	offset: number = 0,
+): Promise<Review[]> {
 	try {
 		let sql = `SELECT * FROM reviews WHERE brand_name = ? AND (title LIKE ? OR body LIKE ? OR ai_body LIKE ?)`;
 		const params = [brand, `%${query}%`, `%${query}%`, `%${query}%`];
@@ -317,7 +329,10 @@ export async function searchReviews(env: Env, brand: string, query: string, stat
 	}
 }
 
-export async function getReviewStats(env: Env, brand: string): Promise<{
+export async function getReviewStats(
+	env: Env,
+	brand: string,
+): Promise<{
 	total: number;
 	pending: number;
 	processing: number;
