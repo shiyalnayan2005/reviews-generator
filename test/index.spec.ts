@@ -184,7 +184,7 @@ describe('Reviews Generator Worker', () => {
 		expect(product).toMatchObject({ title: 'Bulk Product', upc_code: '111222333444', handle: 'bulk-product' });
 	});
 
-	it('bulk imports product reviews from webhook-shaped product JSON', async () => {
+	it('bulk imports product reviews from simple product JSON', async () => {
 		const asin = `BULK-WEBHOOK-${Date.now()}`;
 		const request = new IncomingRequest('http://example.com/api/products/bulk?brand=happimess', {
 			method: 'POST',
@@ -192,17 +192,15 @@ describe('Reviews Generator Worker', () => {
 			body: JSON.stringify({
 				products: [
 					{
-						input: `https://www.amazon.com/dp/${asin}`,
-						result: {
-							name: 'Bulk Product With Reviews',
-							product_information: { upc: '' },
-							reviews: [
-								{ username: 'Tester', stars: '5.05', title: 'Great', review: 'Works well' },
-								{ username: 'Tester', stars: '4.05', title: 'Good', review: 'Pretty useful' },
-								{ username: 'Tester', stars: 3, title: 'Great', review: 'Duplicate title' },
-								{ username: 'Tester', stars: 2, title: 'Missing body', review: '' },
-							],
-						},
+						asin,
+						title: 'Bulk Product With Reviews',
+						upc_code: '',
+						reviews: [
+							{ reviewer_name: 'Tester', review_count: '5.05', title: 'Great', content: 'Works well' },
+							{ reviewer_name: 'Tester', review_count: '4.05', title: 'Good', content: 'Pretty useful' },
+							{ reviewer_name: 'Tester', review_count: 3, title: 'Great', content: 'Duplicate title' },
+							{ reviewer_name: 'Tester', review_count: 2, title: 'Missing body', content: '' },
+						],
 					},
 				],
 			}),

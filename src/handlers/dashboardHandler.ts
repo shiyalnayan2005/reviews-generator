@@ -2051,21 +2051,18 @@ function serveDashboardHTML(): Response {
             const bulkExamples = {
                 products: [
                     {
-                        input: 'https://www.amazon.com/dp/B09BR9D33J',
-                        result: {
-                            name: 'Kitchen Trash Can',
-                            product_information: {
-                                upc: '123456789012'
-                            },
-                            reviews: [
-                                {
-                                    username: 'Amazon Customer',
-                                    stars: 4,
-                                    title: 'Looks good',
-                                    review: 'The bags that came with the garbage bin were too small.'
-                                }
-                            ]
-                        }
+                        asin: 'B09BR9D33J',
+                        title: 'Kitchen Trash Can',
+                        upc_code: '123456789012',
+                        handle: 'kitchen-trash-can',
+                        reviews: [
+                            {
+                                reviewer_name: 'Amazon Customer',
+                                review_count: 4,
+                                title: 'Looks good',
+                                content: 'The bags that came with the garbage bin were too small.'
+                            }
+                        ]
                     }
                 ],
                 reviews: [
@@ -2102,10 +2099,10 @@ function serveDashboardHTML(): Response {
                 document.getElementById('bulk-json-type').value = type;
                 document.getElementById('bulk-json-title').textContent = isProducts ? 'Bulk Add Products' : 'Bulk Add Reviews';
                 document.getElementById('bulk-json-note').textContent = isProducts
-                    ? 'Import products from an array. Existing ASINs are updated.'
+                    ? 'Import products from a simple array. Existing ASINs are updated.'
                     : 'Import reviews from an array. Bad rows are reported and the rest continue.';
                 document.getElementById('bulk-json-help').textContent = isProducts
-                    ? 'Paste a JSON array using the webhook product format: input and result.name. UPC is read from result.product_information.upc.'
+                    ? 'Required: asin, title. Optional: upc_code, handle, reviews. Reviews use title, content, review_count, reviewer_name.'
                     : 'Required: asin, title, content, review_count. ASIN must already exist in products.';
                 document.getElementById('bulk-json-input').value = '';
                 document.getElementById('bulk-json-input').placeholder = JSON.stringify(bulkExamples[type], null, 2);
