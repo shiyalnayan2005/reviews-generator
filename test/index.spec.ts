@@ -197,8 +197,10 @@ describe('Reviews Generator Worker', () => {
 							name: 'Bulk Product With Reviews',
 							product_information: { upc: '' },
 							reviews: [
-								{ username: 'Tester', stars: 5, title: 'Great', review: 'Works well' },
-								{ username: 'Tester', stars: 4, title: 'Good', review: 'Pretty useful' },
+								{ username: 'Tester', stars: '5.05', title: 'Great', review: 'Works well' },
+								{ username: 'Tester', stars: '4.05', title: 'Good', review: 'Pretty useful' },
+								{ username: 'Tester', stars: 3, title: 'Great', review: 'Duplicate title' },
+								{ username: 'Tester', stars: 2, title: 'Missing body', review: '' },
 							],
 						},
 					},
@@ -211,7 +213,11 @@ describe('Reviews Generator Worker', () => {
 
 		expect(response.status).toBe(200);
 		const data = await response.json<any>();
-		expect(data).toMatchObject({ success: true, total: 1, processed: 1, failed: 0, reviewsInserted: 2, reviewsSkipped: 0, reviewsFailed: 0 });
+		expect(data).toMatchObject({ success: true, total: 1, processed: 1, failed: 0, reviewsInserted: 2, reviewsSkipped: 2, reviewsFailed: 0 });
+		expect(data.results[0].reviewDetails).toEqual([
+			'Review #3 "Great": skipped because a review with this title already exists for this ASIN.',
+			'Review #4 "Missing body": skipped because review content is required.',
+		]);
 
 		const product = await env.DB.prepare(`SELECT title FROM products WHERE asin = ?`).bind(asin).first<{ title: string }>();
 		const reviewCount = await env.DB.prepare(`SELECT COUNT(*) as total FROM reviews WHERE asin = ?`).bind(asin).first<{ total: number }>();

@@ -252,6 +252,7 @@ interface BulkItemResult {
 	reviewsInserted?: number;
 	reviewsSkipped?: number;
 	reviewsFailed?: number;
+	reviewDetails?: string[];
 	message: string;
 }
 
@@ -264,7 +265,7 @@ function stringValue(value: unknown): string {
 }
 
 function ratingValue(value: unknown): number {
-	const rating = parseFloat(String(value ?? ''));
+	const rating = Math.trunc(parseFloat(String(value ?? '')));
 	return Number.isFinite(rating) && rating >= 1 && rating <= 5 ? rating : 0;
 }
 
@@ -325,6 +326,58 @@ function normalizeBulkProductItem(item: Record<string, unknown>): { asin: string
 	};
 }
 
+async function insertProductReviewsWithDetails(
+	env: Env,
+	brand: BrandName,
+	asin: string,
+	reviews: AmazonReview[],
+): Promise<{ inserted: number; skipped: number; failed: number; details: string[] }> {
+	let inserted = 0;
+	let skipped = 0;
+	let failed = 0;
+	const details: string[] = [];
+
+	for (let index = 0; index < reviews.length; index++) {
+		const review = reviews[index];
+		const title = stringValue(review.title);
+		const body = stringValue(review.review);
+		const rating = ratingValue(review.stars);
+		const label = `Review #${index + 1}${title ? ` "${title}"` : ''}`;
+
+		if (!title) {
+			skipped++;
+			details.push(`${label}: skipped because title is required.`);
+			continue;
+		}
+		if (!body) {
+			skipped++;
+			details.push(`${label}: skipped because review content is required.`);
+			continue;
+		}
+		if (!rating) {
+			skipped++;
+			details.push(`${label}: skipped because rating must be a number from 1 to 5.`);
+			continue;
+		}
+
+		try {
+			const count = await insertReviews(env, brand, asin, [{ username: review.username || 'Anonymous', email: '', stars: rating, title, review: body }]);
+			if (count) {
+				inserted += count;
+				continue;
+			}
+
+			skipped++;
+			details.push(`${label}: skipped because a review with this title already exists for this ASIN.`);
+		} catch (error) {
+			failed++;
+			details.push(`${label}: failed to insert review${error instanceof Error ? `: ${error.message}` : '.'}`);
+		}
+	}
+
+	return { inserted, skipped, failed, details };
+}
+
 async function bulkInsertProducts(
 	env: Env,
 	brand: BrandName,
@@ -365,22 +418,20 @@ async function bulkInsertProducts(
 
 			if (reviews.length) {
 				try {
-					const inserted = await insertReviews(
-						env,
-						brand,
-						asin,
-						reviews.map((review) => ({ ...review, email: '' })),
-					);
-					const skipped = reviews.length - inserted;
+					const reviewResult = await insertProductReviewsWithDetails(env, brand, asin, reviews);
+					const { inserted, skipped, failed: reviewFailed, details } = reviewResult;
 					reviewsInserted += inserted;
 					reviewsSkipped += skipped;
+					reviewsFailed += reviewFailed;
 					results.push({
 						index,
 						asin,
-						success: true,
+						success: reviewFailed === 0,
 						reviewsInserted: inserted,
 						reviewsSkipped: skipped,
-						message: `Product saved. ${inserted} review${inserted === 1 ? '' : 's'} inserted${skipped ? `, ${skipped} skipped as duplicate` : ''}.`,
+						reviewsFailed: reviewFailed,
+						reviewDetails: details,
+						message: `Product saved. ${inserted} review${inserted === 1 ? '' : 's'} inserted${skipped ? `, ${skipped} skipped` : ''}${reviewFailed ? `, ${reviewFailed} failed` : ''}.`,
 					});
 				} catch (reviewError) {
 					reviewsFailed += reviews.length;
@@ -389,6 +440,7 @@ async function bulkInsertProducts(
 						asin,
 						success: false,
 						reviewsFailed: reviews.length,
+						reviewDetails: [reviewError instanceof Error ? reviewError.message : 'Unknown review import error.'],
 						message: reviewError instanceof Error ? `Product saved, but reviews failed: ${reviewError.message}` : 'Product saved, but reviews failed.',
 					});
 				}
@@ -2081,11 +2133,14 @@ function serveDashboardHTML(): Response {
                         \`Reviews failed: \${result.reviewsFailed || 0}\`
                     );
                 }
-                const problemRows = (result.results || []).filter((item) => !item.success || item.inserted === 0).slice(0, 20);
+                const problemRows = (result.results || []).filter((item) => !item.success || item.inserted === 0 || item.reviewsSkipped || item.reviewsFailed).slice(0, 20);
                 if (problemRows.length) {
                     lines.push('', 'Details:');
                     problemRows.forEach((item) => {
                         lines.push(\`#\${Number(item.index) + 1}\${item.asin ? ' [' + item.asin + ']' : ''}: \${item.message}\`);
+                        (item.reviewDetails || []).slice(0, 5).forEach((detail) => {
+                            lines.push(\`  - \${detail}\`);
+                        });
                     });
                 }
                 return lines.join('\\n');

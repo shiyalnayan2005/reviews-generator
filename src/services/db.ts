@@ -183,8 +183,9 @@ function normalizeReviewBody(review?: string): string {
 }
 
 function normalizeReviewRating(stars?: string | number): number {
-	const rating = parseInt(String(stars));
-	return Number.isFinite(rating) && rating > 0 ? rating : 1;
+	const rating = Math.trunc(parseFloat(String(stars)));
+	if (!Number.isFinite(rating)) return 1;
+	return Math.min(5, Math.max(1, rating));
 }
 
 export async function getReview(env: Env, id: string, brand?: string): Promise<Review | null> {
