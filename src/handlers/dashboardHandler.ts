@@ -18,6 +18,7 @@ import { ValidationError } from '../lib/errors';
 import { fetchShopifyProductHandleByUPC } from '../services/shopify';
 import { BRANDS_KEY, BrandName } from '../config';
 import { validateBrandName } from '../middleware/validation';
+import type { AmazonProductData } from '../types';
 
 export async function handleDashboard(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
@@ -264,6 +265,39 @@ function ratingValue(value: unknown): number {
 	return Number.isFinite(rating) && rating >= 1 && rating <= 5 ? rating : 0;
 }
 
+function parseProductResult(value: unknown): AmazonProductData | null {
+	if (!value) return null;
+	if (typeof value === 'string') {
+		try {
+			const parsed = JSON.parse(value);
+			return asRecord(parsed) ? (parsed as AmazonProductData) : null;
+		} catch {
+			return null;
+		}
+	}
+	return asRecord(value) ? (value as AmazonProductData) : null;
+}
+
+function asinFromInput(value: unknown): string {
+	const input = stringValue(value);
+	if (!input) return '';
+	const withoutQuery = input.split('?')[0];
+	const segments = withoutQuery.split('/').map((segment) => segment.trim()).filter(Boolean);
+	return segments.at(-1) || input;
+}
+
+function normalizeBulkProductItem(item: Record<string, unknown>): { asin: string; title: string; upcCode: string; handle: string } {
+	const result = parseProductResult(item.result);
+	const productInformation = result?.product_information;
+
+	return {
+		asin: stringValue(item.asin ?? result?.asin) || asinFromInput(item.input),
+		title: stringValue(item.title ?? item.name ?? result?.name),
+		upcCode: stringValue(item.upc_code ?? item.upc ?? item.UPC ?? productInformation?.upc ?? productInformation?.UPC),
+		handle: stringValue(item.handle ?? item.shopify_handle),
+	};
+}
+
 async function bulkInsertProducts(
 	env: Env,
 	brand: BrandName,
@@ -275,16 +309,14 @@ async function bulkInsertProducts(
 
 	for (let index = 0; index < items.length; index++) {
 		const item = asRecord(items[index]);
-		const asin = stringValue(item?.asin);
-		const title = stringValue(item?.title ?? item?.name);
-		const upcCode = stringValue(item?.upc_code ?? item?.upc ?? item?.UPC);
-		const handle = stringValue(item?.handle ?? item?.shopify_handle);
-
 		if (!item) {
 			failed++;
 			results.push({ index, success: false, message: 'Item must be an object.' });
 			continue;
 		}
+
+		const { asin, title, upcCode, handle: providedHandle } = normalizeBulkProductItem(item);
+
 		if (!asin) {
 			failed++;
 			results.push({ index, success: false, message: 'ASIN is required.' });
@@ -297,6 +329,7 @@ async function bulkInsertProducts(
 		}
 
 		try {
+			const handle = providedHandle || (upcCode ? await fetchShopifyProductHandleByUPC(env, brand, upcCode) : '');
 			await insertProduct(env, { asin, brand_name: brand, name: title, upc_code: upcCode, handle });
 			processed++;
 			results.push({ index, asin, success: true, message: 'Product saved.' });
