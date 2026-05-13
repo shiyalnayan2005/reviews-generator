@@ -10,21 +10,66 @@ export interface ShopifyProductUpdateCandidate {
 
 export async function insertProduct(env: Env, data: ProductInsertData): Promise<void> {
 	try {
-		await env.DB.prepare(
-			`
-			INSERT INTO products (asin, brand_name, title, handle, upc_code)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(asin, brand_name) DO UPDATE SET
-				title = excluded.title,
-				handle = excluded.handle,
-				upc_code = excluded.upc_code
-		`,
-		)
-			.bind(data.asin, data.brand_name, data.name || null, data.handle || null, data.upc_code || null)
-			.run();
+		const title = data.name || null;
+		const handle = data.handle || null;
+		const upcCode = data.upc_code || null;
+
+		try {
+			await env.DB.prepare(
+				`
+				INSERT INTO products (asin, brand_name, title, handle, upc_code)
+				VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT(asin, brand_name) DO UPDATE SET
+					title = excluded.title,
+					handle = excluded.handle,
+					upc_code = excluded.upc_code
+			`,
+			)
+				.bind(data.asin, data.brand_name, title, handle, upcCode)
+				.run();
+			return;
+		} catch (error) {
+			if (!isMissingProductConflictConstraintError(error)) throw error;
+		}
+
+		await upsertProductWithoutConflictConstraint(env, data.asin, data.brand_name, title, handle, upcCode);
 	} catch (error) {
 		throw new DatabaseError(`Failed to insert product: ${error}`);
 	}
+}
+
+function isMissingProductConflictConstraintError(error: unknown): boolean {
+	return String(error).includes('ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint');
+}
+
+async function upsertProductWithoutConflictConstraint(
+	env: Env,
+	asin: string,
+	brandName: string,
+	title: string | null,
+	handle: string | null,
+	upcCode: string | null,
+): Promise<void> {
+	const updateResult = await env.DB.prepare(
+		`
+		UPDATE products
+		SET title = ?, handle = ?, upc_code = ?
+		WHERE asin = ? AND brand_name = ?
+	`,
+	)
+		.bind(title, handle, upcCode, asin, brandName)
+		.run();
+
+	if ((updateResult.meta?.changes || 0) > 0) return;
+
+	await env.DB.prepare(
+		`
+		INSERT INTO products (asin, brand_name, title, handle, upc_code)
+		VALUES (?, ?, ?, ?, ?)
+	`,
+	)
+		.bind(asin, brandName, title, handle, upcCode)
+		.run();
 }
 
 export async function getProductsForShopifyUpdate(env: Env, brand: string, limit: number = 25): Promise<ShopifyProductUpdateCandidate[]> {

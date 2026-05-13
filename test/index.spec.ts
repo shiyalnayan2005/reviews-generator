@@ -184,6 +184,49 @@ describe('Reviews Generator Worker', () => {
 		expect(product).toMatchObject({ title: 'Bulk Product', upc_code: '111222333444', handle: 'bulk-product' });
 	});
 
+	it('bulk imports products when the products table is missing the ASIN brand unique constraint', async () => {
+		await env.DB.prepare(`DROP TABLE IF EXISTS products`).run();
+		await env.DB.prepare(
+			`
+			CREATE TABLE products (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				asin TEXT NOT NULL,
+				brand_name TEXT NOT NULL,
+				title TEXT,
+				handle TEXT,
+				upc_code TEXT,
+				created_at TEXT DEFAULT CURRENT_TIMESTAMP
+			)
+		`,
+		).run();
+
+		const asin = `BULK-LEGACY-${Date.now()}`;
+		const firstRequest = new IncomingRequest('http://example.com/api/products/bulk?brand=happimess', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ products: [{ asin, title: 'Legacy Product', upc_code: '111222333444', handle: 'legacy-product' }] }),
+		});
+		const firstCtx = createExecutionContext();
+		const firstResponse = await worker.fetch(firstRequest, env, firstCtx);
+		await waitOnExecutionContext(firstCtx);
+		expect(firstResponse.status).toBe(200);
+
+		const secondRequest = new IncomingRequest('http://example.com/api/products/bulk?brand=happimess', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ products: [{ asin, title: 'Updated Legacy Product', upc_code: '999888777666', handle: 'updated-legacy-product' }] }),
+		});
+		const secondCtx = createExecutionContext();
+		const secondResponse = await worker.fetch(secondRequest, env, secondCtx);
+		await waitOnExecutionContext(secondCtx);
+
+		expect(secondResponse.status).toBe(200);
+		const product = await env.DB.prepare(`SELECT title, upc_code, handle FROM products WHERE asin = ? AND brand_name = ?`)
+			.bind(asin, 'happimess')
+			.first<{ title: string; upc_code: string; handle: string }>();
+		expect(product).toMatchObject({ title: 'Updated Legacy Product', upc_code: '999888777666', handle: 'updated-legacy-product' });
+	});
+
 	it('bulk imports reviews and reports duplicates and invalid rows without stopping', async () => {
 		const asin = `BULK-R-${Date.now()}`;
 		await env.DB.prepare(`INSERT INTO products (asin, brand_name, title) VALUES (?, ?, ?)`).bind(asin, 'happimess', 'Review Product').run();
