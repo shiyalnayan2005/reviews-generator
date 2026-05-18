@@ -744,6 +744,11 @@ function serveDashboardHTML(): Response {
             .status-processing { background: #dbeafe; color: #1e40af; }
             .status-done { background: #d1fae5; color: #065f46; }
             .status-failed { background: #fee2e2; color: #dc2626; }
+            .status-clickable {
+                cursor: pointer;
+                text-decoration: underline;
+                text-underline-offset: 2px;
+            }
             .btn {
                 padding: 8px 16px;
                 border: none;
@@ -1006,6 +1011,22 @@ function serveDashboardHTML(): Response {
             .review-ai {
                 background: #ecfdf5;
                 border-left: 4px solid #10b981;
+            }
+            .review-logs {
+                margin-top: 20px;
+                padding: 15px;
+                border-radius: 8px;
+                background: #fff7ed;
+                border-left: 4px solid #f97316;
+            }
+            .review-logs pre {
+                margin: 10px 0 0;
+                white-space: pre-wrap;
+                overflow-x: auto;
+                font-family: Consolas, Monaco, monospace;
+                font-size: 12px;
+                line-height: 1.5;
+                color: #7c2d12;
             }
             .review-title {
                 font-weight: bold;
@@ -1590,7 +1611,7 @@ function serveDashboardHTML(): Response {
                             <td>\${escapeHtml(review.title)}</td>
                             <td>\${escapeHtml(review.rating)}</td>
                             <td>\${escapeHtml(review.date)}</td>
-                            <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
+                            <td>\${renderReviewStatus(review)}</td>
                             <td>
                                 <div class="actions">
                                     <button class="btn btn-secondary icon-btn" onclick="editReview(\${review.id})" title="Edit review" aria-label="Edit review" \${actionState ? 'disabled' : ''}>\${icons.edit}</button>
@@ -1604,6 +1625,14 @@ function serveDashboardHTML(): Response {
                     \`;
                 }).join('') || '<tr><td colspan="7" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
                 renderPagination('reviews-pagination', currentReviewPage, hasNextReviewPage, 'changeReviewPage');
+            }
+
+            function renderReviewStatus(review) {
+                const status = escapeHtml(review.ai_status);
+                if (review.ai_status !== 'failed') {
+                    return \`<span class="status-badge status-\${status}">\${status}</span>\`;
+                }
+                return \`<span class="status-badge status-\${status} status-clickable" onclick="viewReview(\${review.id})" title="View failure logs" aria-label="View failure logs for review \${escapeHtml(review.id)}">\${status}</span>\`;
             }
 
             async function loadStats() {
@@ -1678,6 +1707,12 @@ function serveDashboardHTML(): Response {
                             <div class="review-email">\${escapeHtml(review.email)}</div>
                             <div>\${escapeHtml(review.ai_body)}</div>
                         </div>
+                        \${review.logs ? \`
+                            <div class="review-logs">
+                                <div class="review-title">Generation Logs</div>
+                                <pre>\${escapeHtml(review.logs)}</pre>
+                            </div>
+                        \` : ''}
                     \`;
                     modal.classList.remove('hidden');
                 } catch (error) {
@@ -1715,8 +1750,8 @@ function serveDashboardHTML(): Response {
                     if (previousReview) {
                         currentReviews = currentReviews.map((review) => Number(review.id) === Number(reviewId) ? previousReview : review);
                         renderReviews();
-                        await loadStats();
                     }
+                    await Promise.all([loadStats(), loadReviews()]);
                     showMessage(error.message || 'Failed to generate review', 'error');
                 } finally {
                     delete reviewActions[reviewId];

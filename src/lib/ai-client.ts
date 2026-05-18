@@ -97,9 +97,20 @@ export async function generateAIReview(env: Env, review: Review): Promise<{ titl
 		},
 	);
 
-	const data: any = await response.json();
-	console.info('PROCESSED DATA : ', data);
+	const responseText = await response.text();
+	const data = parseAIResponseJson(responseText);
+	console.info('PROCESSED DATA : ', data ?? responseText);
+
+	if (!response.ok) {
+		throw new Error(
+			`AI request failed with status ${response.status} ${response.statusText}\nAI response:\n${formatAIResponseForError(data, responseText)}`,
+		);
+	}
+
 	const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+	if (!text) {
+		throw new Error(`AI response did not include candidate text\nAI response:\n${formatAIResponseForError(data, responseText)}`);
+	}
 
 	let parsed;
 
@@ -108,9 +119,25 @@ export async function generateAIReview(env: Env, review: Review): Promise<{ titl
 		if (parsed.title && parsed.body && parsed.email) {
 			return { ...parsed };
 		} else {
-			return { title: '', body: '', email: '' };
+			throw new Error(`AI JSON is missing required fields\nParsed AI JSON:\n${JSON.stringify(parsed, null, 2)}\nAI response:\n${formatAIResponseForError(data, responseText)}`);
 		}
-	} catch {
-		throw new Error('Invalid AI response');
+	} catch (error) {
+		if (error instanceof SyntaxError) {
+			throw new Error(`Invalid AI response JSON\nCandidate text:\n${text}\nAI response:\n${formatAIResponseForError(data, responseText)}`);
+		}
+		throw error;
 	}
+}
+
+function parseAIResponseJson(responseText: string): any | null {
+	try {
+		return responseText ? JSON.parse(responseText) : null;
+	} catch {
+		return null;
+	}
+}
+
+function formatAIResponseForError(data: any | null, responseText: string): string {
+	if (data) return JSON.stringify(data, null, 2);
+	return responseText || '(empty response)';
 }

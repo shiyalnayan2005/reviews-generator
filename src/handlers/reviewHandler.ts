@@ -1,4 +1,4 @@
-import { getReview, updateReview, getPendingReviews, getReviewStats } from '../services/db';
+import { getReview, updateReview, getPendingReviews, getReviewStats, markReviewGenerationFailed } from '../services/db';
 import { AIReviewOutput, generateReviewWithRetry } from '../services/aiService';
 import { validateBrandName, validateReviewId } from '../middleware/validation';
 import { handleError } from '../middleware/errorHandler';
@@ -47,7 +47,7 @@ export async function processPendingReviews(env: Env, limit: number, brand?: Bra
 			console.log(`Completed review ${review.id}`);
 		} catch (err) {
 			console.error(`Failed for ${review.id}:`, err);
-			await updateReview(env, review.id.toString(), 'failed', { title: '', body: '', email: '' });
+			await markReviewGenerationFailed(env, review.id.toString(), buildReviewGenerationLog(err, review.id.toString(), brand), brand);
 			results.push({ id: review.id, status: 'failed' });
 		}
 	}
@@ -64,15 +64,54 @@ export async function handleReviewGenerate(request: Request, env: Env): Promise<
 		const aiBody = await generateReviewById(env, id!, brand);
 		return Response.json({ success: true, data: { ...aiBody } });
 	} catch (error) {
-		const id = new URL(request.url).searchParams.get('id');
+		const url = new URL(request.url);
+		const id = url.searchParams.get('id');
+		const brand = brandFromRequestForLog(url);
 		if (id && !isNaN(parseInt(id))) {
 			try {
-				await updateReview(env, id, 'failed', { title: '', body: '', email: '' });
+				await markReviewGenerationFailed(env, id, buildReviewGenerationLog(error, id, brand), brand);
 			} catch (updateError) {
 				console.error('Failed to mark review generation as failed:', updateError);
 			}
 		}
 		return handleError(error);
+	}
+}
+
+function brandFromRequestForLog(url: URL): BrandName | undefined {
+	try {
+		return validateBrandName(url.searchParams.get('brand'));
+	} catch {
+		return undefined;
+	}
+}
+
+function buildReviewGenerationLog(error: unknown, reviewId: string, brand?: BrandName): string {
+	const lines = [
+		`[${new Date().toISOString()}] Review generation failed`,
+		`Review ID: ${reviewId}`,
+		brand ? `Brand: ${brand}` : '',
+		'Error:',
+		formatErrorForLog(error),
+	].filter(Boolean);
+	return lines.join('\n');
+}
+
+function formatErrorForLog(error: unknown): string {
+	if (error instanceof Error) {
+		const details: string[] = [`Name: ${error.name}`, `Message: ${error.message}`];
+		const maybeError = error as Error & { code?: unknown; statusCode?: unknown; retryable?: unknown };
+		if (maybeError.code !== undefined) details.push(`Code: ${String(maybeError.code)}`);
+		if (maybeError.statusCode !== undefined) details.push(`Status Code: ${String(maybeError.statusCode)}`);
+		if (maybeError.retryable !== undefined) details.push(`Retryable: ${String(maybeError.retryable)}`);
+		if (error.stack) details.push(`Stack:\n${error.stack}`);
+		return details.join('\n');
+	}
+
+	try {
+		return JSON.stringify(error, null, 2);
+	} catch {
+		return String(error);
 	}
 }
 

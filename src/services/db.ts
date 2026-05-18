@@ -337,6 +337,34 @@ export async function updateReview(env: Env, id: string, status: string, aiRevie
 	}
 }
 
+export async function markReviewGenerationFailed(env: Env, id: string, logEntry: string, brand?: string): Promise<void> {
+	try {
+		const sql = brand
+			? `
+				UPDATE reviews
+				SET ai_status = ?, ai_title = ?, ai_body = ?, email = ?,
+					logs = CASE WHEN logs IS NULL OR TRIM(logs) = '' THEN ? ELSE logs || ? || ? END
+				WHERE id = ? AND brand_name = ?
+			`
+			: `
+				UPDATE reviews
+				SET ai_status = ?, ai_title = ?, ai_body = ?, email = ?,
+					logs = CASE WHEN logs IS NULL OR TRIM(logs) = '' THEN ? ELSE logs || ? || ? END
+				WHERE id = ?
+			`;
+		const separator = '\n\n';
+		const params = brand
+			? ['failed', '', '', '', logEntry, separator, logEntry, parseInt(id), brand]
+			: ['failed', '', '', '', logEntry, separator, logEntry, parseInt(id)];
+
+		await env.DB.prepare(sql)
+			.bind(...params)
+			.run();
+	} catch (error) {
+		throw new DatabaseError(`Failed to mark review generation failed: ${error}`);
+	}
+}
+
 export async function clearReviewAI(env: Env, brand: string, id: string): Promise<void> {
 	try {
 		await env.DB.prepare(`UPDATE reviews SET ai_status = ?, ai_title = ?, ai_body = ?, email = ? WHERE id = ? AND brand_name = ?`)

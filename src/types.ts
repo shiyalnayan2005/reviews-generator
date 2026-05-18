@@ -22,6 +22,7 @@ export interface Review {
 	ai_title: string | null;
 	ai_body: string | null;
 	ai_status: 'pending' | 'processing' | 'done' | 'failed';
+	logs: string | null;
 	created_at: string;
 }
 

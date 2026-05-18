@@ -19,6 +19,13 @@ export async function generateReviewWithRetry(env: Env, review: Review): Promise
 			timeoutMs: 60000, // 60 second timeout for AI calls
 		});
 	} catch (error) {
-		throw new AIError(`AI generation failed: ${error}`, true);
+		throw new AIError(`AI generation failed: ${formatAIError(error)}`, true);
 	}
+}
+
+function formatAIError(error: unknown): string {
+	if (error instanceof Error) {
+		return [error.message, error.stack ? `Stack:\n${error.stack}` : ''].filter(Boolean).join('\n');
+	}
+	return String(error);
 }

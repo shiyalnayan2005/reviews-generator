@@ -2,6 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloud
 import { beforeEach, describe, it, expect } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import worker from '../src/index';
+import { markReviewGenerationFailed } from '../src/services/db';
 
 // For now, you'll need to do something like this to get a correctly-typed
 // `Request` to pass to `worker.fetch()`.
@@ -39,6 +40,7 @@ async function resetWebhookTables(): Promise<void> {
 			ai_title TEXT DEFAULT '',
 			ai_body TEXT DEFAULT '',
 			ai_status TEXT DEFAULT 'pending',
+			logs TEXT,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
 	`,
@@ -352,5 +354,32 @@ describe('Reviews Generator Worker', () => {
 		expect(['01/01/2026', '01/02/2026', '01/03/2026']).toContain(byTitle['Blank one']);
 		expect(['01/01/2026', '01/02/2026', '01/03/2026']).toContain(byTitle['Blank two']);
 		expect(byTitle['Already dated']).toBe('12/31/2025');
+	});
+
+	it('stores timestamped generation failure logs on failed reviews', async () => {
+		const asin = `LOGS-${Date.now()}`;
+		await env.DB.prepare(`INSERT INTO products (asin, brand_name, title) VALUES (?, ?, ?)`).bind(asin, 'happimess', 'Logs Product').run();
+		const insert = await env.DB.prepare(`INSERT INTO reviews (asin, brand_name, reviewer_name, rating, title, body) VALUES (?, ?, ?, ?, ?, ?)`)
+			.bind(asin, 'happimess', 'Logger', 5, 'Needs logs', 'This should log failures.')
+			.run();
+		const reviewId = String(insert.meta.last_row_id);
+
+		await markReviewGenerationFailed(
+			env,
+			reviewId,
+			'[2026-05-18T12:00:00.000Z] Review generation failed\nError:\nAI response:\n{"error":"quota"}',
+			'happimess',
+		);
+		await markReviewGenerationFailed(env, reviewId, '[2026-05-18T12:05:00.000Z] Review generation failed\nError:\nsecond failure', 'happimess');
+
+		const review = await env.DB.prepare(`SELECT ai_status, logs FROM reviews WHERE id = ?`)
+			.bind(reviewId)
+			.first<{ ai_status: string; logs: string }>();
+
+		expect(review?.ai_status).toBe('failed');
+		expect(review?.logs).toContain('[2026-05-18T12:00:00.000Z] Review generation failed');
+		expect(review?.logs).toContain('AI response:');
+		expect(review?.logs).toContain('second failure');
+		expect(review?.logs).toContain('\n\n[2026-05-18T12:05:00.000Z]');
 	});
 });
