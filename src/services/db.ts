@@ -164,11 +164,63 @@ export async function insertReviews(env: Env, brand: string, asin: string, revie
 	}
 }
 
+export async function applyRandomReviewDates(
+	env: Env,
+	brand: string,
+	startDateInput: string,
+	endDateInput: string,
+): Promise<{ matched: number; updated: number }> {
+	try {
+		const startTime = parseReviewDateInput(startDateInput);
+		const endTime = parseReviewDateInput(endDateInput);
+		if (startTime == null || endTime == null) {
+			throw new Error('Start date and end date must be valid dates.');
+		}
+		if (startTime > endTime) {
+			throw new Error('Start date must be before or equal to end date.');
+		}
+
+		const result = await env.DB.prepare(
+			`
+			SELECT id
+			FROM reviews
+			WHERE brand_name = ? AND (date IS NULL OR TRIM(date) = '')
+		`,
+		)
+			.bind(brand)
+			.all<{ id: number }>();
+		const rows = result.results || [];
+		if (!rows.length) return { matched: 0, updated: 0 };
+
+		const updateStmt = env.DB.prepare(
+			`
+			UPDATE reviews
+			SET date = ?
+			WHERE id = ? AND brand_name = ? AND (date IS NULL OR TRIM(date) = '')
+		`,
+		);
+		let updated = 0;
+
+		for (let index = 0; index < rows.length; index += 100) {
+			const batch = rows.slice(index, index + 100).map((row) => updateStmt.bind(randomReviewDate(startTime, endTime), row.id, brand));
+			const batchResults = await env.DB.batch(batch);
+			updated += batchResults.reduce((count: number, batchResult: D1BatchResult) => count + (batchResult.success ? batchResult.meta?.changes || 0 : 0), 0);
+		}
+
+		return { matched: rows.length, updated };
+	} catch (error) {
+		throw new DatabaseError(`Failed to apply random review dates: ${error}`);
+	}
+}
+
 export function normalizeReviewDate(rawDate?: string): string {
 	const value = rawDate?.trim();
 	if (!value) return '';
 
 	const dateText = value.replace(/^Reviewed\b.*?\bon\s+/i, '').trim();
+	const inputDate = parseReviewDateInput(dateText);
+	if (inputDate != null) return formatReviewDate(inputDate);
+
 	const slashDate = dateText.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
 	if (slashDate) {
 		const [, month, day, year] = slashDate;
@@ -197,6 +249,45 @@ export function normalizeReviewDate(rawDate?: string): string {
 	if (!month) return '';
 
 	return `${month}/${day.padStart(2, '0')}/${year}`;
+}
+
+function randomReviewDate(startTime: number, endTime: number): string {
+	const dayMs = 24 * 60 * 60 * 1000;
+	const startDay = Math.floor(startTime / dayMs);
+	const endDay = Math.floor(endTime / dayMs);
+	const randomDay = startDay + Math.floor(Math.random() * (endDay - startDay + 1));
+	return formatReviewDate(randomDay * dayMs);
+}
+
+function parseReviewDateInput(value: string): number | null {
+	const input = value.trim();
+	const isoDate = input.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	if (isoDate) {
+		const [, year, month, day] = isoDate;
+		return validUtcDate(Number(year), Number(month), Number(day));
+	}
+
+	const slashDate = input.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+	if (!slashDate) return null;
+
+	const [, month, day, year] = slashDate;
+	return validUtcDate(Number(year), Number(month), Number(day));
+}
+
+function validUtcDate(year: number, month: number, day: number): number | null {
+	if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+	const time = Date.UTC(year, month - 1, day);
+	const date = new Date(time);
+	if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+	return time;
+}
+
+function formatReviewDate(time: number): string {
+	const date = new Date(time);
+	const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+	const day = String(date.getUTCDate()).padStart(2, '0');
+	const year = date.getUTCFullYear();
+	return `${month}/${day}/${year}`;
 }
 
 function normalizeReviewTitle(title?: string): string {

@@ -2,6 +2,7 @@ import {
 	clearReviewAI,
 	deleteProduct,
 	deleteReview,
+	applyRandomReviewDates,
 	getProductsWithReviewCounts,
 	getProductReviews,
 	getReview,
@@ -70,6 +71,26 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			const body = (await request.json().catch(() => ({}))) as { reviews?: unknown[] } | unknown[];
 			const items = Array.isArray(body) ? body : Array.isArray(body.reviews) ? body.reviews : [];
 			const result = await bulkInsertReviews(env, brand, items);
+			return Response.json({ success: true, ...result });
+		}
+
+		if (pathname === '/api/reviews/random-dates' && request.method === 'POST') {
+			const body = (await request.json().catch(() => ({}))) as { startDate?: string; endDate?: string };
+			const startDate = stringValue(body.startDate);
+			const endDate = stringValue(body.endDate);
+			if (!startDate || !endDate) {
+				return handleError(new ValidationError('Start date and end date are required'));
+			}
+			const startTime = parseIsoDateInput(startDate);
+			const endTime = parseIsoDateInput(endDate);
+			if (startTime == null || endTime == null) {
+				return handleError(new ValidationError('Start date and end date must be valid dates'));
+			}
+			if (startTime > endTime) {
+				return handleError(new ValidationError('Start date must be before or equal to end date'));
+			}
+
+			const result = await applyRandomReviewDates(env, brand, startDate, endDate);
 			return Response.json({ success: true, ...result });
 		}
 
@@ -270,6 +291,16 @@ function stringValue(value: unknown): string {
 function ratingValue(value: unknown): number {
 	const rating = Math.trunc(parseFloat(String(value ?? '')));
 	return Number.isFinite(rating) && rating >= 1 && rating <= 5 ? rating : 0;
+}
+
+function parseIsoDateInput(value: string): number | null {
+	const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	if (!match) return null;
+	const [, year, month, day] = match;
+	const time = Date.UTC(Number(year), Number(month) - 1, Number(day));
+	const date = new Date(time);
+	if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) return null;
+	return time;
 }
 
 function parseProductResult(value: unknown): AmazonProductData | null {
@@ -662,6 +693,28 @@ function serveDashboardHTML(): Response {
                 gap: 10px;
                 align-items: center;
                 flex-wrap: wrap;
+            }
+            .date-fill-actions {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                flex-wrap: wrap;
+                padding: 12px;
+                margin-bottom: 16px;
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+            }
+            .date-fill-actions label {
+                font-size: 13px;
+                font-weight: 700;
+                color: #475569;
+            }
+            .date-fill-actions input {
+                width: 160px;
+                padding: 9px 10px;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
             }
             .table {
                 width: 100%;
@@ -1086,6 +1139,13 @@ function serveDashboardHTML(): Response {
                         <button class="btn btn-primary" onclick="openReviewAddModal()">Add Review</button>
                         <button class="btn btn-secondary" onclick="openBulkJsonModal('reviews')">Bulk Add Reviews</button>
                     </div>
+                </div>
+                <div class="date-fill-actions">
+                    <label for="random-date-start">Start Date</label>
+                    <input type="date" id="random-date-start">
+                    <label for="random-date-end">End Date</label>
+                    <input type="date" id="random-date-end">
+                    <button class="btn btn-secondary" id="random-date-btn" onclick="applyRandomDates()">Apply Random Dates to Blank Reviews</button>
                 </div>
                 <table class="table" id="reviews-table">
                     <thead>
@@ -1839,6 +1899,44 @@ function serveDashboardHTML(): Response {
                 } catch (error) {
                     console.error('Failed to update Shopify product information:', error);
                     showMessage(error.message || 'Failed to update Shopify handles', 'error');
+                } finally {
+                    btn.textContent = originalText;
+                    btn.classList.remove('processing');
+                    btn.disabled = false;
+                }
+            }
+
+            async function applyRandomDates() {
+                const btn = document.getElementById('random-date-btn');
+                const startDate = document.getElementById('random-date-start').value;
+                const endDate = document.getElementById('random-date-end').value;
+
+                if (!startDate || !endDate) {
+                    showMessage('Select both start and end dates.', 'error');
+                    return;
+                }
+                if (startDate > endDate) {
+                    showMessage('Start date must be before or equal to end date.', 'error');
+                    return;
+                }
+                if (!confirm('Apply random dates to all reviews with a blank date?')) return;
+
+                const originalText = btn.textContent;
+                btn.textContent = 'Applying...';
+                btn.classList.add('processing');
+                btn.disabled = true;
+
+                try {
+                    const data = await fetchJson('/api/reviews/random-dates', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ startDate, endDate })
+                    });
+                    await loadReviews();
+                    showMessage(\`Applied random dates to \${data.updated || 0} of \${data.matched || 0} blank-date reviews.\`, 'success');
+                } catch (error) {
+                    console.error('Failed to apply random review dates:', error);
+                    showMessage(error.message || 'Failed to apply random dates', 'error');
                 } finally {
                     btn.textContent = originalText;
                     btn.classList.remove('processing');

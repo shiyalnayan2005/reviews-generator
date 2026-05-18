@@ -300,4 +300,57 @@ describe('Reviews Generator Worker', () => {
 			.first<{ reviewer_name: string; rating: number; title: string; body: string; date: string }>();
 		expect(review).toMatchObject({ reviewer_name: 'Amazon Customer', rating: 4, title: 'Looks good', body: 'Nice product.', date: '01/25/2026' });
 	});
+
+	it('applies random dates only to reviews with blank dates', async () => {
+		const asin = `RAND-DATE-${Date.now()}`;
+		await env.DB.prepare(`INSERT INTO products (asin, brand_name, title) VALUES (?, ?, ?)`).bind(asin, 'happimess', 'Random Date Product').run();
+		await env.DB.batch([
+			env.DB.prepare(`INSERT INTO reviews (asin, brand_name, reviewer_name, rating, title, body, date) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(
+				asin,
+				'happimess',
+				'Blank Date',
+				5,
+				'Blank one',
+				'Needs date.',
+				'',
+			),
+			env.DB.prepare(`INSERT INTO reviews (asin, brand_name, reviewer_name, rating, title, body, date) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(
+				asin,
+				'happimess',
+				'Null Date',
+				4,
+				'Blank two',
+				'Also needs date.',
+				null,
+			),
+			env.DB.prepare(`INSERT INTO reviews (asin, brand_name, reviewer_name, rating, title, body, date) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(
+				asin,
+				'happimess',
+				'Existing Date',
+				3,
+				'Already dated',
+				'Keep this date.',
+				'12/31/2025',
+			),
+		]);
+
+		const request = new IncomingRequest('http://example.com/api/reviews/random-dates?brand=happimess', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ startDate: '2026-01-01', endDate: '2026-01-03' }),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<any>();
+		expect(data).toMatchObject({ success: true, matched: 2, updated: 2 });
+
+		const reviews = await env.DB.prepare(`SELECT title, date FROM reviews WHERE asin = ? ORDER BY title`).bind(asin).all<{ title: string; date: string }>();
+		const byTitle = Object.fromEntries((reviews.results || []).map((review) => [review.title, review.date]));
+		expect(['01/01/2026', '01/02/2026', '01/03/2026']).toContain(byTitle['Blank one']);
+		expect(['01/01/2026', '01/02/2026', '01/03/2026']).toContain(byTitle['Blank two']);
+		expect(byTitle['Already dated']).toBe('12/31/2025');
+	});
 });
