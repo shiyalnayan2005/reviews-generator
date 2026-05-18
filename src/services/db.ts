@@ -397,9 +397,9 @@ export async function deleteProduct(env: Env, brand: string, asin: string): Prom
 export async function getPendingReviews(env: Env, limit: number = 10, brand?: string): Promise<Review[]> {
 	try {
 		const sql = brand
-			? `SELECT * FROM reviews WHERE brand_name = ? AND ai_status = ? LIMIT ?`
-			: `SELECT * FROM reviews WHERE ai_status = ? LIMIT ?`;
-		const stmt = brand ? env.DB.prepare(sql).bind(brand, 'pending', limit) : env.DB.prepare(sql).bind('pending', limit);
+			? `SELECT * FROM reviews WHERE brand_name = ? AND ai_status IN (?, ?) LIMIT ?`
+			: `SELECT * FROM reviews WHERE ai_status IN (?, ?) LIMIT ?`;
+		const stmt = brand ? env.DB.prepare(sql).bind(brand, 'pending', 'failed', limit) : env.DB.prepare(sql).bind('pending', 'failed', limit);
 		const result = await stmt.all<Review>();
 		return result.results || [];
 	} catch (error) {
