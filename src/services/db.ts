@@ -142,8 +142,8 @@ export async function updateProduct(
 export async function insertReviews(env: Env, brand: string, asin: string, reviews: ReviewInsertData[]): Promise<number> {
 	try {
 		const insertStmt = env.DB.prepare(`
-			INSERT INTO reviews (asin, brand_name, reviewer_name, email, rating, title, body)
-			SELECT ?, ?, ?, ?, ?, ?, ?
+			INSERT INTO reviews (asin, brand_name, reviewer_name, email, rating, title, body, date)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?
 			WHERE NOT EXISTS (
 				SELECT 1 FROM reviews WHERE brand_name = ? AND asin = ? AND title = ?
 			)
@@ -153,7 +153,8 @@ export async function insertReviews(env: Env, brand: string, asin: string, revie
 			const title = normalizeReviewTitle(r.title);
 			const review = normalizeReviewBody(r.review);
 			const rating = normalizeReviewRating(r.stars);
-			return insertStmt.bind(asin, brand, r.username || 'Anonymous', r.email || '', rating, title, review, brand, asin, title);
+			const date = normalizeReviewDate(r.date);
+			return insertStmt.bind(asin, brand, r.username || 'Anonymous', r.email || '', rating, title, review, date, brand, asin, title);
 		});
 
 		const results = await env.DB.batch(batch);
@@ -161,6 +162,41 @@ export async function insertReviews(env: Env, brand: string, asin: string, revie
 	} catch (error) {
 		throw new DatabaseError(`Failed to insert reviews: ${error}`);
 	}
+}
+
+export function normalizeReviewDate(rawDate?: string): string {
+	const value = rawDate?.trim();
+	if (!value) return '';
+
+	const dateText = value.replace(/^Reviewed\b.*?\bon\s+/i, '').trim();
+	const slashDate = dateText.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+	if (slashDate) {
+		const [, month, day, year] = slashDate;
+		return `${month.padStart(2, '0')}/${day.padStart(2, '0')}/${year}`;
+	}
+
+	const longDate = dateText.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/);
+	if (!longDate) return '';
+
+	const months: Record<string, string> = {
+		january: '01',
+		february: '02',
+		march: '03',
+		april: '04',
+		may: '05',
+		june: '06',
+		july: '07',
+		august: '08',
+		september: '09',
+		october: '10',
+		november: '11',
+		december: '12',
+	};
+	const [, monthName, day, year] = longDate;
+	const month = months[monthName.toLowerCase()];
+	if (!month) return '';
+
+	return `${month}/${day.padStart(2, '0')}/${year}`;
 }
 
 function normalizeReviewTitle(title?: string): string {

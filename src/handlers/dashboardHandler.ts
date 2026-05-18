@@ -10,6 +10,7 @@ import {
 	getProductsForShopifyUpdate,
 	insertProduct,
 	insertReviews,
+	normalizeReviewDate,
 	updateProductShopifyHandle,
 	updateProduct,
 } from '../services/db';
@@ -91,6 +92,7 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 					rating?: string | number;
 					title?: string;
 					body?: string;
+					date?: string;
 				};
 				const asin = body.asin?.trim();
 				if (!asin) {
@@ -109,6 +111,7 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 						stars: body.rating || 1,
 						title: body.title?.trim() || '',
 						review: body.body?.trim() || '',
+						date: body.date?.trim() || '',
 					},
 				]);
 				return Response.json({ success: true, inserted });
@@ -124,10 +127,10 @@ export async function handleDashboard(request: Request, env: Env): Promise<Respo
 			}
 
 			if (request.method === 'PUT') {
-				const requestBody = (await request.json().catch(() => ({}))) as { title?: string; body?: string; rating?: number };
-				const { title, body: reviewBody, rating } = requestBody;
-				await env.DB.prepare(`UPDATE reviews SET title = ?, body = ?, rating = ? WHERE id = ? AND brand_name = ?`)
-					.bind(title || null, reviewBody || null, rating || 1, parseInt(id), brand)
+				const requestBody = (await request.json().catch(() => ({}))) as { title?: string; body?: string; rating?: number; date?: string };
+				const { title, body: reviewBody, rating, date } = requestBody;
+				await env.DB.prepare(`UPDATE reviews SET title = ?, body = ?, rating = ?, date = ? WHERE id = ? AND brand_name = ?`)
+					.bind(title || null, reviewBody || null, rating || 1, normalizeReviewDate(date), parseInt(id), brand)
 					.run();
 				return Response.json({ success: true });
 			}
@@ -305,6 +308,7 @@ function normalizeProductReview(value: unknown): AmazonReview | null {
 		stars: stars as string | number | undefined,
 		title,
 		review,
+		date: stringValue(item.date),
 	};
 }
 
@@ -361,7 +365,7 @@ async function insertProductReviewsWithDetails(
 		}
 
 		try {
-			const count = await insertReviews(env, brand, asin, [{ username: review.username || 'Anonymous', email: '', stars: rating, title, review: body }]);
+			const count = await insertReviews(env, brand, asin, [{ username: review.username || 'Anonymous', email: '', stars: rating, title, review: body, date: review.date }]);
 			if (count) {
 				inserted += count;
 				continue;
@@ -475,6 +479,7 @@ async function bulkInsertReviews(
 		const reviewerName = stringValue(item?.reviewer_name ?? item?.username ?? item?.name) || 'Anonymous';
 		const email = stringValue(item?.email);
 		const rating = ratingValue(item?.rating ?? item?.review_count ?? item?.stars);
+		const date = stringValue(item?.date);
 
 		if (!item) {
 			failed++;
@@ -510,7 +515,7 @@ async function bulkInsertReviews(
 				continue;
 			}
 
-			const inserted = await insertReviews(env, brand, asin, [{ username: reviewerName, email, stars: rating, title, review: body }]);
+			const inserted = await insertReviews(env, brand, asin, [{ username: reviewerName, email, stars: rating, title, review: body, date }]);
 			if (inserted) {
 				processed++;
 				results.push({ index, asin, success: true, inserted, message: 'Review inserted.' });
@@ -1089,13 +1094,14 @@ function serveDashboardHTML(): Response {
                             <th>ASIN</th>
                             <th>Title</th>
                             <th>Rating</th>
+                            <th>Date</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="reviews-tbody">
                         <tr>
-                            <td colspan="6" style="text-align: center; padding: 40px;">
+                            <td colspan="7" style="text-align: center; padding: 40px;">
                                 <div class="loading"></div> Loading reviews...
                             </td>
                         </tr>
@@ -1229,6 +1235,10 @@ function serveDashboardHTML(): Response {
                                 <label for="add-review-email">Email</label>
                                 <input type="email" id="add-review-email" placeholder="Optional">
                             </div>
+                            <div class="form-field">
+                                <label for="add-review-date">Review Date</label>
+                                <input type="text" id="add-review-date" placeholder="MM/DD/YYYY">
+                            </div>
                             <div class="form-field full">
                                 <label for="add-review-title">Title</label>
                                 <input type="text" id="add-review-title" required>
@@ -1272,6 +1282,10 @@ function serveDashboardHTML(): Response {
                                     <option value="2">2</option>
                                     <option value="1">1</option>
                                 </select>
+                            </div>
+                            <div class="form-field">
+                                <label for="edit-review-date">Review Date</label>
+                                <input type="text" id="edit-review-date" placeholder="MM/DD/YYYY">
                             </div>
                             <div class="form-field full">
                                 <label for="edit-review-title">Title</label>
@@ -1515,6 +1529,7 @@ function serveDashboardHTML(): Response {
                             <td>\${escapeHtml(review.asin)}</td>
                             <td>\${escapeHtml(review.title)}</td>
                             <td>\${escapeHtml(review.rating)}</td>
+                            <td>\${escapeHtml(review.date)}</td>
                             <td><span class="status-badge status-\${escapeHtml(review.ai_status)}">\${escapeHtml(review.ai_status)}</span></td>
                             <td>
                                 <div class="actions">
@@ -1527,7 +1542,7 @@ function serveDashboardHTML(): Response {
                             </td>
                         </tr>
                     \`;
-                }).join('') || '<tr><td colspan="6" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
+                }).join('') || '<tr><td colspan="7" style="text-align: center; padding: 40px;">No reviews found.</td></tr>';
                 renderPagination('reviews-pagination', currentReviewPage, hasNextReviewPage, 'changeReviewPage');
             }
 
@@ -1593,6 +1608,7 @@ function serveDashboardHTML(): Response {
                     content.innerHTML = \`
                         <div class="review-original">
                             <div class="review-title">Original Review</div>
+                            <div class="review-meta">\${escapeHtml(review.date)}</div>
                             <div class="review-title">\${escapeHtml(review.title)}</div>
                             <div>\${escapeHtml(review.body)}</div>
                         </div>
@@ -1985,6 +2001,7 @@ function serveDashboardHTML(): Response {
                     rating: Number(document.getElementById('add-review-rating').value),
                     reviewer_name: document.getElementById('add-reviewer-name').value.trim(),
                     email: document.getElementById('add-review-email').value.trim(),
+                    date: document.getElementById('add-review-date').value.trim(),
                     title: document.getElementById('add-review-title').value.trim(),
                     body: document.getElementById('add-review-body').value.trim()
                 };
@@ -2017,6 +2034,7 @@ function serveDashboardHTML(): Response {
                 document.getElementById('edit-review-title').value = review.title || '';
                 document.getElementById('edit-review-body').value = review.body || '';
                 document.getElementById('edit-review-rating').value = String(review.rating || 5);
+                document.getElementById('edit-review-date').value = review.date || '';
 
                 document.getElementById('review-edit-modal').classList.remove('hidden');
             }
@@ -2027,17 +2045,18 @@ function serveDashboardHTML(): Response {
                 const title = document.getElementById('edit-review-title').value;
                 const body = document.getElementById('edit-review-body').value;
                 const rating = Number(document.getElementById('edit-review-rating').value);
+                const date = document.getElementById('edit-review-date').value;
 
                 try {
                     await fetchJson('/api/review?id=' + encodeURIComponent(id), {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ title, body, rating })
+                        body: JSON.stringify({ title, body, rating, date })
                     });
 
                     // Update the review in the current list
                     currentReviews = currentReviews.map(r =>
-                        r.id === parseInt(id) ? { ...r, title: title || null, body: body || null, rating } : r
+                        r.id === parseInt(id) ? { ...r, title: title || null, body: body || null, rating, date } : r
                     );
                     renderReviews();
                     closeReviewEditModal();
@@ -2060,7 +2079,8 @@ function serveDashboardHTML(): Response {
                                 reviewer_name: 'Amazon Customer',
                                 review_count: 4,
                                 title: 'Looks good',
-                                content: 'The bags that came with the garbage bin were too small.'
+                                content: 'The bags that came with the garbage bin were too small.',
+                                date: 'Reviewed in the United States on January 25, 2026'
                             }
                         ]
                     }
@@ -2071,14 +2091,16 @@ function serveDashboardHTML(): Response {
                         reviewer_name: 'Amazon Customer',
                         review_count: 4,
                         title: 'Looks good',
-                        content: 'The bags that came with the garbage bin were too small.'
+                        content: 'The bags that came with the garbage bin were too small.',
+                        date: 'Reviewed in the United States on January 25, 2026'
                     },
                     {
                         asin: 'B09BR9D33J',
                         reviewer_name: 'Tessa',
                         review_count: 5,
                         title: 'Get it!',
-                        content: 'Excellent garbage can! It takes up very little space.'
+                        content: 'Excellent garbage can! It takes up very little space.',
+                        date: '01/25/2026'
                     }
                 ]
             };
@@ -2102,8 +2124,8 @@ function serveDashboardHTML(): Response {
                     ? 'Import products from a simple array. Existing ASINs are updated.'
                     : 'Import reviews from an array. Bad rows are reported and the rest continue.';
                 document.getElementById('bulk-json-help').textContent = isProducts
-                    ? 'Required: asin, title. Optional: upc_code, handle, reviews. Reviews use title, content, review_count, reviewer_name.'
-                    : 'Required: asin, title, content, review_count. ASIN must already exist in products.';
+                    ? 'Required: asin, title. Optional: upc_code, handle, reviews. Reviews use title, content, review_count, reviewer_name, date.'
+                    : 'Required: asin, title, content, review_count. Optional: date. ASIN must already exist in products.';
                 document.getElementById('bulk-json-input').value = '';
                 document.getElementById('bulk-json-input').placeholder = JSON.stringify(bulkExamples[type], null, 2);
                 document.getElementById('bulk-json-status').style.display = 'none';

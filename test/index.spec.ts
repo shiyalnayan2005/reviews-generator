@@ -34,6 +34,7 @@ async function resetWebhookTables(): Promise<void> {
 			email TEXT,
 			rating REAL,
 			title TEXT,
+			date TEXT,
 			body TEXT,
 			ai_title TEXT DEFAULT '',
 			ai_body TEXT DEFAULT '',
@@ -106,7 +107,7 @@ describe('Reviews Generator Worker', () => {
 			result: {
 				name: 'Test Product',
 				product_information: { upc: ' 123456789012 ' },
-				reviews: [{ username: 'Tester', stars: 5, title: 'Great', review: 'Works well' }],
+				reviews: [{ username: 'Tester', stars: 5, title: 'Great', review: 'Works well', date: 'Reviewed in the United States on January 25, 2026' }],
 			},
 		});
 		const body = zipSync({ 'products.jsonl': strToU8(`${line}\n`) });
@@ -131,7 +132,7 @@ describe('Reviews Generator Worker', () => {
 			result: {
 				name: 'Duplicate Test Product',
 				product_information: { upc: ' 998877665544 ' },
-				reviews: [{ username: 'Tester', title: 'Great\n5.0 out of 5 stars', review: 'Works well' }],
+				reviews: [{ username: 'Tester', title: 'Great\n5.0 out of 5 stars', review: 'Works well', date: 'Reviewed in the United States on January 25, 2026' }],
 			},
 		});
 		const body = zipSync({ 'products.jsonl': strToU8(`${line}\n${line}\n`) });
@@ -146,14 +147,15 @@ describe('Reviews Generator Worker', () => {
 
 		expect(response.status).toBe(200);
 		const reviewCount = await env.DB.prepare(`SELECT COUNT(*) as total FROM reviews WHERE asin = ?`).bind(asin).first<{ total: number }>();
-		const review = await env.DB.prepare(`SELECT rating, title FROM reviews WHERE asin = ?`)
+		const review = await env.DB.prepare(`SELECT rating, title, date FROM reviews WHERE asin = ?`)
 			.bind(asin)
-			.first<{ rating: number; title: string }>();
+			.first<{ rating: number; title: string; date: string }>();
 		const product = await env.DB.prepare(`SELECT upc_code FROM products WHERE asin = ?`).bind(asin).first<{ upc_code: string }>();
 
 		expect(reviewCount?.total).toBe(1);
 		expect(review?.rating).toBe(1);
 		expect(review?.title).toBe('Great');
+		expect(review?.date).toBe('01/25/2026');
 		expect(product?.upc_code).toBe('998877665544');
 	});
 
@@ -196,7 +198,7 @@ describe('Reviews Generator Worker', () => {
 						title: 'Bulk Product With Reviews',
 						upc_code: '',
 						reviews: [
-							{ reviewer_name: 'Tester', review_count: '5.05', title: 'Great', content: 'Works well' },
+							{ reviewer_name: 'Tester', review_count: '5.05', title: 'Great', content: 'Works well', date: 'Reviewed in the United States on January 25, 2026' },
 							{ reviewer_name: 'Tester', review_count: '4.05', title: 'Good', content: 'Pretty useful' },
 							{ reviewer_name: 'Tester', review_count: 3, title: 'Great', content: 'Duplicate title' },
 							{ reviewer_name: 'Tester', review_count: 2, title: 'Missing body', content: '' },
@@ -219,13 +221,13 @@ describe('Reviews Generator Worker', () => {
 
 		const product = await env.DB.prepare(`SELECT title FROM products WHERE asin = ?`).bind(asin).first<{ title: string }>();
 		const reviewCount = await env.DB.prepare(`SELECT COUNT(*) as total FROM reviews WHERE asin = ?`).bind(asin).first<{ total: number }>();
-		const review = await env.DB.prepare(`SELECT reviewer_name, rating, title, body FROM reviews WHERE asin = ? AND title = ?`)
+		const review = await env.DB.prepare(`SELECT reviewer_name, rating, title, body, date FROM reviews WHERE asin = ? AND title = ?`)
 			.bind(asin, 'Great')
-			.first<{ reviewer_name: string; rating: number; title: string; body: string }>();
+			.first<{ reviewer_name: string; rating: number; title: string; body: string; date: string }>();
 
 		expect(product).toMatchObject({ title: 'Bulk Product With Reviews' });
 		expect(reviewCount?.total).toBe(2);
-		expect(review).toMatchObject({ reviewer_name: 'Tester', rating: 5, title: 'Great', body: 'Works well' });
+		expect(review).toMatchObject({ reviewer_name: 'Tester', rating: 5, title: 'Great', body: 'Works well', date: '01/25/2026' });
 	});
 
 	it('bulk imports products when the products table is missing the ASIN brand unique constraint', async () => {
@@ -279,7 +281,7 @@ describe('Reviews Generator Worker', () => {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify([
-				{ asin, reviewer_name: 'Amazon Customer', review_count: 4, title: 'Looks good', content: 'Nice product.' },
+				{ asin, reviewer_name: 'Amazon Customer', review_count: 4, title: 'Looks good', content: 'Nice product.', date: 'Reviewed in the United States on January 25, 2026' },
 				{ asin, reviewer_name: 'Amazon Customer', review_count: 4, title: 'Looks good', content: 'Duplicate title.' },
 				{ asin: 'MISSING-ASIN', reviewer_name: 'Tessa', review_count: 5, title: 'Get it!', content: 'Great.' },
 				{ asin, reviewer_name: 'No Rating', title: 'No rating', content: 'Missing rating.' },
@@ -293,9 +295,9 @@ describe('Reviews Generator Worker', () => {
 		const data = await response.json<any>();
 		expect(data).toMatchObject({ success: true, total: 4, processed: 1, skipped: 1, failed: 2 });
 
-		const review = await env.DB.prepare(`SELECT reviewer_name, rating, title, body FROM reviews WHERE asin = ?`)
+		const review = await env.DB.prepare(`SELECT reviewer_name, rating, title, body, date FROM reviews WHERE asin = ?`)
 			.bind(asin)
-			.first<{ reviewer_name: string; rating: number; title: string; body: string }>();
-		expect(review).toMatchObject({ reviewer_name: 'Amazon Customer', rating: 4, title: 'Looks good', body: 'Nice product.' });
+			.first<{ reviewer_name: string; rating: number; title: string; body: string; date: string }>();
+		expect(review).toMatchObject({ reviewer_name: 'Amazon Customer', rating: 4, title: 'Looks good', body: 'Nice product.', date: '01/25/2026' });
 	});
 });

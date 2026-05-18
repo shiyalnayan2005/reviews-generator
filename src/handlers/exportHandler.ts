@@ -1,4 +1,5 @@
 import { validateBrandName } from '../middleware/validation';
+import { normalizeReviewDate } from '../services/db';
 
 export async function exportReviews(request: Request, env: Env): Promise<Response> {
 	const brand = validateBrandName(new URL(request.url).searchParams.get('brand'));
@@ -10,7 +11,8 @@ export async function exportReviews(request: Request, env: Env): Promise<Respons
       r.rating,
       r.ai_title,
       r.reviewer_name,
-      r.email
+      r.email,
+      r.date
     FROM reviews r
     JOIN products p ON r.asin = p.asin AND r.brand_name = p.brand_name
     WHERE r.brand_name = ? AND r.ai_body IS NOT NULL
@@ -26,6 +28,7 @@ export async function exportReviews(request: Request, env: Env): Promise<Respons
 		'Review Title': row.ai_title,
 		'Reviewer Display Name': row.reviewer_name,
 		'Reviewer Email': row.email,
+		'Review Creation Date': normalizeReviewDate(row.date),
 		'Publish Review': false,
 	}));
 

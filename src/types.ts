@@ -16,6 +16,7 @@ export interface Review {
 	reviewer_name: string | null;
 	rating: number | null;
 	title: string | null;
+	date: string | null;
 	email: string | null;
 	body: string | null;
 	ai_title: string | null;
@@ -46,6 +47,7 @@ export interface AmazonReview {
 	stars?: string | number;
 	title?: string;
 	review?: string;
+	date?: string;
 }
 
 // Database operation types
@@ -63,6 +65,7 @@ export interface ReviewInsertData {
 	stars?: string | number;
 	title?: string;
 	review?: string;
+	date?: string;
 }
 
 export interface D1BatchResult {
